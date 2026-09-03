@@ -2,6 +2,7 @@ package devmgr
 
 import (
 	"fmt"
+	"path/filepath"
 	"strings"
 )
 
@@ -14,15 +15,19 @@ type StartCommand struct {
 
 // BuildStartCommand ports the bash _build_start_command `case`:
 //
-//	*wrangler* → --port P --ip 127.0.0.1
-//	*vite*     → --host 127.0.0.1 --port P
-//	*next*     → --port P --hostname 127.0.0.1
-//	*          → -- --port P
+//	*wrangler*          → --port P --ip 127.0.0.1
+//	*vite*              → --host 127.0.0.1 --port P
+//	*next*              → --port P --hostname 127.0.0.1
+//	npm-style wrapper   → -- --port P
+//	direct executable   → no flags; PORT/HOST env is what pins the port
 //
-// Env PORT/HOST/NODE_ENV is always injected when the command is a known
-// wrapper so next/vite respect the single source of truth. When
-// enforce_unique_ports is disabled, or the port is null (workers), the raw
-// command is returned unchanged (no flags, no PORT env).
+// The `--` exists so npm-style run scripts forward the flag to the
+// underlying binary; on a direct executable it would arrive as literal argv
+// (e.g. Thor treats everything after `--` as positional args and the boot
+// dies). Env PORT/HOST/NODE_ENV is always injected when enforcing so
+// direct executables (bin/dev, bin/rails, …) still bind the configured
+// port. When enforce_unique_ports is disabled, or the port is null
+// (workers), the raw command is returned unchanged (no flags, no PORT env).
 func BuildStartCommand(devCommand string, port *int, enforce bool) StartCommand {
 	raw := strings.TrimSpace(devCommand)
 	if raw == "" {
@@ -42,7 +47,9 @@ func BuildStartCommand(devCommand string, port *int, enforce bool) StartCommand 
 	case strings.Contains(raw, "next") || strings.Contains(raw, "nextjs"):
 		flags = []string{"--port", fmt.Sprintf("%d", *port), "--hostname", "127.0.0.1"}
 	default:
-		flags = []string{"--", "--port", fmt.Sprintf("%d", *port)}
+		if isJsRunWrapper(raw) {
+			flags = []string{"--", "--port", fmt.Sprintf("%d", *port)}
+		}
 	}
 	argv = append(argv, flags...)
 
@@ -63,6 +70,22 @@ func hasCfPrefix(raw string) bool {
 		return false
 	}
 	return strings.HasPrefix(fields[0], "cf") || fields[0] == "wrangler"
+}
+
+// isJsRunWrapper reports whether raw starts with an npm-style run-script
+// runner, which needs a bare `--` to forward flags past the wrapper to the
+// underlying script.
+func isJsRunWrapper(raw string) bool {
+	fields := strings.Fields(raw)
+	if len(fields) == 0 {
+		return false
+	}
+	switch filepath.Base(fields[0]) {
+	case "npm", "pnpm", "yarn", "bun", "npx", "pnpx", "bunx":
+		return true
+	default:
+		return false
+	}
 }
 
 // splitArgs breaks a dev_command into argv, handling simple quoted strings.
