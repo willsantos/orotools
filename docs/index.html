@@ -144,7 +144,8 @@
   "use strict";
 
   var RELEASES = "https://github.com/willsantos/orotools/releases";
-  var API_LATEST = "https://api.github.com/repos/willsantos/orotools/releases/latest";
+  var REPO_SLUG = "willsantos/orotools";
+  var API_LATEST = "https://api.github.com/repos/" + REPO_SLUG + "/releases/latest";
 
   function detect() {
     var ua = navigator.userAgent + " " + navigator.platform;
@@ -177,22 +178,74 @@
     note.textContent = name;
   }
 
-  function setupAssets(tag) {
+  // Tabela a partir dos assets reais da release (inclui .deb/.rpm, cujos
+  // nomes convencionais do GoReleaser não são deriváveis de tag+SO+arch).
+  // Assets vêm da API pública: nada é interpolado em innerHTML — labels e
+  // nomes vão como textContent e a URL só é aceita dentro do prefixo
+  // oficial de download do repo, sem caracteres de quebra de atributo.
+  function safeAssetUrl(url) {
+    var prefix = "https://github.com/" + REPO_SLUG + "/releases/download/";
+    if (typeof url !== "string" || url.indexOf(prefix) !== 0) return null;
+    if (/["'\s<>\\]/.test(url)) return null;
+    return url;
+  }
+
+  function setupAssets(rel) {
     var section = document.getElementById("assets");
     var table = document.getElementById("assets-table");
-    document.getElementById("assets-tag").textContent = tag;
+    document.getElementById("assets-tag").textContent = rel.tag_name || "";
     var rows = [];
-    ["linux", "darwin", "windows"].forEach(function (os) {
-      ["amd64", "arm64"].forEach(function (arch) {
-        var name = assetName(tag, os, arch);
-        rows.push([os + " " + arch, name]);
-      });
+    (rel.assets || []).forEach(function (a) {
+      var name = typeof a.name === "string" ? a.name : "";
+      var url = safeAssetUrl(a.browser_download_url);
+      if (!name || !url) return;
+      var order = 9;
+      var label = name;
+      var m = name.match(/^oro_[\d.]+_(linux|darwin|windows)_(amd64|arm64)\.(tar\.gz|zip)$/);
+      var arch;
+      if (m) { order = 0; label = m[1] + " " + m[2]; }
+      else if (/\.deb$/.test(name)) {
+        order = 1;
+        arch = name.indexOf("_arm64.deb") > -1 ? "arm64" : "amd64";
+        label = "linux " + arch + " · deb";
+      }
+      else if (/\.rpm$/.test(name)) {
+        order = 2;
+        arch = name.indexOf("aarch64") > -1 ? "arm64" : "amd64";
+        label = "linux " + arch + " · rpm";
+      }
+      else if (name === "checksums.txt") { order = 3; label = "checksums"; }
+      rows.push({ order: order, label: label, name: name, url: url });
     });
-    rows.push(["checksums", "checksums.txt"]);
-    table.innerHTML = rows.map(function (row) {
-      return "<tr><td>" + row[0] + "</td><td><a href=\"" +
-        RELEASES + "/download/" + tag + "/" + row[1] + "\">" + row[1] + "</a></td></tr>";
-    }).join("");
+
+    table.textContent = "";
+    if (!rows.length) {
+      var trEmpty = document.createElement("tr");
+      var tdEmpty = document.createElement("td");
+      tdEmpty.setAttribute("colspan", "2");
+      tdEmpty.textContent = "Nenhum asset utilizável nesta release — veja a página de releases.";
+      trEmpty.appendChild(tdEmpty);
+      table.appendChild(trEmpty);
+      section.style.display = "block";
+      return;
+    }
+
+    rows.sort(function (x, y) {
+      return x.order - y.order || (x.label < y.label ? -1 : x.label > y.label ? 1 : 0);
+    });
+    rows.forEach(function (r) {
+      var tr = document.createElement("tr");
+      var tdLabel = document.createElement("td");
+      tdLabel.textContent = r.label;
+      var tdLink = document.createElement("td");
+      var link = document.createElement("a");
+      link.setAttribute("href", r.url);
+      link.textContent = r.name;
+      tdLink.appendChild(link);
+      tr.appendChild(tdLabel);
+      tr.appendChild(tdLink);
+      table.appendChild(tr);
+    });
     section.style.display = "block";
   }
 
@@ -203,7 +256,7 @@
         var tag = rel.tag_name;
         if (!tag) throw new Error("sem tag");
         setupDownload(tag);
-        setupAssets(tag);
+        setupAssets(rel);
       })
       .catch(function () { /* fallback: links para releases permanecem */ });
   }
