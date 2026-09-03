@@ -1,0 +1,6 @@
+version: 1
+name: unknown-field
+not_a_real_field: oops
+steps:
+  - type: message
+    text: x

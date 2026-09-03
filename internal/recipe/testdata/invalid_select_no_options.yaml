@@ -1,0 +1,7 @@
+version: 1
+name: select-no-options
+
+variables:
+  db:
+    type: select
+    default: postgres

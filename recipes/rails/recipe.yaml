@@ -1,0 +1,45 @@
+version: 1
+
+name: rails
+description: Ruby on Rails application
+
+requirements:
+  - command: git
+  - command: ruby
+    version: ">=3.2"
+  - command: rails
+
+variables:
+  database:
+    type: select
+    default: postgres
+    options:
+      - postgres
+      - sqlite
+      - mysql
+      - none
+
+steps:
+  - id: rails-new
+    stage: scaffold
+    type: exec
+    command: rails
+    args:
+      - new
+      - .
+      - --database=postgresql
+      - --skip-git
+    skip_if:
+      path_exists: Gemfile
+  - id: ready
+    type: message
+    text: "Rails project scaffolded."
+
+skills:
+  bundled:
+    - base/code-review
+    - rails/conventions
+
+agents:
+  bundled:
+    - architect

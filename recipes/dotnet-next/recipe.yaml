@@ -1,0 +1,83 @@
+version: 1
+
+name: dotnet-next
+description: .NET Web API + Next.js monorepo
+
+requirements:
+  - command: git
+  - command: dotnet
+    version: ">=10"
+  - command: node
+    version: ">=24"
+  - command: pnpm
+    when:
+      variable: package_manager
+      equals: pnpm
+
+variables:
+  database:
+    type: select
+    default: postgres
+    options:
+      - postgres
+      - sqlserver
+      - sqlite
+      - none
+  package_manager:
+    type: select
+    default: pnpm
+    options:
+      - pnpm
+      - npm
+      - yarn
+  docker:
+    type: boolean
+    default: true
+
+steps:
+  - id: api
+    stage: scaffold
+    type: exec
+    command: dotnet
+    args:
+      - new
+      - webapi
+      - -o
+      - apps/api
+      - -n
+      - Api
+    skip_if:
+      path_exists: apps/api
+  - id: web
+    stage: scaffold
+    type: exec
+    command: pnpm
+    args:
+      - create
+      - next-app
+      - apps/web
+      - --yes
+    skip_if:
+      path_exists: apps/web
+  - id: docker
+    stage: configure
+    type: template
+    source: templates/docker-compose.yml.tmpl
+    destination: docker-compose.yml
+    when:
+      variable: docker
+      equals: true
+  - id: ready
+    type: message
+    text: "Dotnet-next monorepo scaffolded."
+
+skills:
+  bundled:
+    - base/code-review
+    - dotnet/aspnet
+    - nextjs/conventions
+
+agents:
+  bundled:
+    - architect
+    - reviewer

@@ -1,0 +1,20 @@
+# Go
+/oro
+/oro.exe
+*.test
+*.out
+coverage.out
+vendor/
+
+# Node (legacy TS under legacy/)
+node_modules/
+dist/
+*.tsbuildinfo
+.turbo/
+
+# Editors / OS
+*.log
+.DS_Store
+.idea/
+.vscode/
+EXPORT/

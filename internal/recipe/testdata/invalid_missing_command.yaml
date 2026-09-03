@@ -1,0 +1,7 @@
+version: 1
+name: missing-command
+steps:
+  - id: run-no-cmd
+    type: exec
+    args:
+      - foo

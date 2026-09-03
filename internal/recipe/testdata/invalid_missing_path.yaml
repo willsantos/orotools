@@ -1,0 +1,5 @@
+version: 1
+name: missing-path
+steps:
+  - id: mkdir-no-path
+    type: mkdir

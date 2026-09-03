@@ -1,0 +1,79 @@
+version: 1
+
+name: dotnet
+description: ASP.NET Core Web API, Worker or Console
+
+requirements:
+  - command: git
+  - command: dotnet
+    version: ">=10"
+
+variables:
+  project_type:
+    type: select
+    default: webapi
+    options:
+      - webapi
+      - worker
+      - console
+  database:
+    type: select
+    default: postgres
+    options:
+      - postgres
+      - sqlserver
+      - sqlite
+      - none
+  docker:
+    type: boolean
+    default: true
+
+steps:
+  - id: api
+    stage: scaffold
+    type: exec
+    command: dotnet
+    args:
+      - new
+      - webapi
+      - -o
+      - src/Api
+      - -n
+      - Api
+    skip_if:
+      path_exists: src/Api
+  - id: sln
+    stage: scaffold
+    type: exec
+    command: dotnet
+    args:
+      - new
+      - sln
+      - -n
+      - Project
+    skip_if:
+      path_exists: Project.sln
+  - id: sln-add
+    stage: scaffold
+    type: exec
+    command: dotnet
+    args:
+      - sln
+      - Project.sln
+      - add
+      - src/Api/Api.csproj
+    skip_if:
+      path_exists: src/Api/Api.csproj
+  - id: ready
+    type: message
+    text: "Dotnet project scaffolded."
+
+skills:
+  bundled:
+    - base/code-review
+    - dotnet/aspnet
+
+agents:
+  bundled:
+    - architect
+    - reviewer

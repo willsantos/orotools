@@ -1,0 +1,108 @@
+{
+  "projects": {
+    "beafaes": {
+      "name": "Bea Faes (Sistema)",
+      "path": "/home/willsantos/dev/clientes/beafaes",
+      "cwd": "/home/willsantos/dev/clientes/beafaes/apps/web",
+      "package_manager": "pnpm",
+      "dev_command": "pnpm dev",
+      "port": 3001,
+      "description": "Monorepo Next.js - Sistema Bea Faes"
+    },
+    "contabil": {
+      "name": "Contábil Santos",
+      "path": "/home/willsantos/dev/clientes/contabilsantos",
+      "cwd": "/home/willsantos/dev/clientes/contabilsantos/cloudflare",
+      "package_manager": "npm",
+      "dev_command": "npm run dev",
+      "port": 5177,
+      "description": "Vite + Next.js (vinext) - Contábil Santos"
+    },
+    "delroyt": {
+      "name": "Dr. Delroy (Deploy Teste)",
+      "path": "/home/willsantos/dev/clientes/deploy_delroy",
+      "cwd": "/home/willsantos/dev/clientes/deploy_delroy",
+      "package_manager": "npm",
+      "dev_command": "npm run dev",
+      "port": 3002,
+      "description": "Next.js - Deploy teste Dr. Delroy"
+    },
+    "dj": {
+      "name": "DJ Gentinha",
+      "path": "/home/willsantos/dev/clientes/djgentinha",
+      "cwd": "/home/willsantos/dev/clientes/djgentinha",
+      "package_manager": "npm",
+      "dev_command": "npm run dev",
+      "port": 5174,
+      "description": "Vite + React - Site DJ Gentinha"
+    },
+    "drcarlos": {
+      "name": "Dr. Carlos (Preview)",
+      "path": "/home/willsantos/dev/clientes/drcarlos",
+      "cwd": "/home/willsantos/dev/clientes/drcarlos/preview",
+      "package_manager": "pnpm",
+      "dev_command": "pnpm dev",
+      "port": 3003,
+      "description": "Next.js - Preview Dr. Carlos"
+    },
+    "drdelroy": {
+      "name": "Dr. Delroy (Site)",
+      "path": "/home/willsantos/dev/clientes/drdelroy",
+      "cwd": "/home/willsantos/dev/clientes/drdelroy",
+      "package_manager": "npm",
+      "dev_command": "npm run dev",
+      "port": 3004,
+      "description": "Next.js - Site Oficial Dr. Delroy"
+    },
+    "avessos": {
+      "name": "Os Avessos",
+      "path": "/home/willsantos/dev/clientes/osAvessos",
+      "cwd": "/home/willsantos/dev/clientes/osAvessos/app",
+      "package_manager": "npm",
+      "dev_command": "npm run dev",
+      "port": 5175,
+      "description": "Vite + React - Site Os Avessos"
+    },
+    "willart": {
+      "name": "Will Santos (Arte)",
+      "path": "/home/willsantos/dev/clientes/willsantos.art",
+      "cwd": "/home/willsantos/dev/clientes/willsantos.art",
+      "package_manager": "pnpm",
+      "dev_command": "pnpm dev",
+      "port": 3005,
+      "description": "Next.js - Portfolio Arte Will Santos"
+    },
+    "willdev": {
+      "name": "Will Santos (Dev)",
+      "path": "/home/willsantos/dev/clientes/willsantos.dev",
+      "cwd": "/home/willsantos/dev/clientes/willsantos.dev",
+      "package_manager": "npm",
+      "dev_command": "npm run dev",
+      "port": 5176,
+      "description": "Vite + Cloudflare - Site willsantos.dev"
+    },
+    "willywave": {
+      "name": "Willy Wave",
+      "path": "/home/willsantos/dev/clientes/willywave",
+      "cwd": "/home/willsantos/dev/clientes/willywave",
+      "package_manager": "pnpm",
+      "dev_command": "pnpm dev:web",
+      "port": 3006,
+      "description": "Monorepo Turbo - Willy Wave (web)"
+    },
+    "bigodi-p": {
+      "name": "Bigodinhos (Prospect)",
+      "path": "/home/willsantos/dev/clientes/prospect",
+      "cwd": "/home/willsantos/dev/clientes/prospect/bigodinhos/app",
+      "package_manager": "pnpm",
+      "dev_command": "pnpm dev",
+      "port": 5178,
+      "description": "Vite + React 19 - Proposta cliente Bigodinhos"
+    }
+  },
+  "settings": {
+    "log_dir": ".dev-logs",
+    "pid_dir": ".dev-pids",
+    "enforce_unique_ports": true
+  }
+}

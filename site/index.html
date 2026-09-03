@@ -1,0 +1,235 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Orotools — scaffold e padronização de projetos</title>
+<meta name="description" content="oro: CLI em Go para criação, inicialização e padronização de projetos de software.">
+<style>
+  :root {
+    --bg: #0d1117;
+    --panel: #161b22;
+    --border: #30363d;
+    --text: #e6edf3;
+    --muted: #9198a1;
+    --gold: #e3b341;
+    --gold-strong: #f0c65a;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font: 16px/1.6 -apple-system, "Segoe UI", Roboto, Ubuntu, sans-serif;
+  }
+  .wrap { max-width: 720px; margin: 0 auto; padding: 0 24px; }
+  header { padding: 72px 0 40px; text-align: center; }
+  .logo {
+    display: inline-block;
+    font-size: 64px; font-weight: 800; letter-spacing: -2px;
+    color: var(--gold);
+  }
+  .tagline { color: var(--muted); font-size: 20px; margin-top: 4px; }
+  h2 { font-size: 18px; margin: 40px 0 12px; }
+  .install {
+    display: flex; align-items: center; gap: 12px;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 14px 16px;
+    font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    font-size: 14px;
+    overflow-x: auto;
+  }
+  .install code { white-space: nowrap; }
+  .install .prompt { color: var(--gold); user-select: none; }
+  button.copy {
+    margin-left: auto;
+    background: transparent;
+    color: var(--muted);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 4px 10px;
+    font-size: 12px;
+    cursor: pointer;
+    flex-shrink: 0;
+  }
+  button.copy:hover { color: var(--text); border-color: var(--muted); }
+  .actions { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 28px; justify-content: center; }
+  a.btn {
+    display: inline-block;
+    padding: 10px 20px;
+    border-radius: 8px;
+    text-decoration: none;
+    font-weight: 600;
+    border: 1px solid var(--border);
+  }
+  a.btn-primary { background: var(--gold); color: #1a1a1a; border-color: var(--gold); }
+  a.btn-primary:hover { background: var(--gold-strong); }
+  a.btn-ghost { color: var(--text); }
+  a.btn-ghost:hover { border-color: var(--muted); }
+  #download-note { color: var(--muted); font-size: 13px; text-align: center; margin-top: 10px; }
+  .fallback { text-align: center; margin-top: 16px; }
+  .fallback a { color: var(--gold); }
+  #assets { display: none; }
+  #assets table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  #assets td { padding: 6px 4px; border-bottom: 1px solid var(--border); }
+  #assets td:last-child { text-align: right; }
+  #assets a { color: var(--gold); text-decoration: none; font-family: ui-monospace, Menlo, monospace; }
+  #assets a:hover { text-decoration: underline; }
+  .muted { color: var(--muted); font-size: 14px; }
+  footer {
+    margin-top: 64px;
+    border-top: 1px solid var(--border);
+    padding: 24px 0 48px;
+    text-align: center;
+    color: var(--muted);
+    font-size: 14px;
+  }
+  footer a { color: var(--text); }
+</style>
+</head>
+<body>
+<header class="wrap">
+  <span class="logo">oro</span>
+  <p class="tagline">Criação, inicialização e padronização de projetos de software.</p>
+</header>
+
+<main class="wrap">
+  <h2>Install</h2>
+  <div class="install">
+    <span class="prompt">$</span>
+    <code id="install-cmd">curl -fsSL https://willsantos.github.io/orotools/install.sh | bash</code>
+    <button class="copy" id="copy-btn" data-copy="curl -fsSL https://willsantos.github.io/orotools/install.sh | bash">copiar</button>
+  </div>
+  <p class="muted" style="margin-top:10px">
+    Detecta SO e arquitetura, valida o checksum sha256 e instala em
+    <code>~/.local/bin</code>. Já tem o oro? <code>oro upgrade</code> atualiza.
+  </p>
+
+  <div class="actions">
+    <a class="btn btn-primary" id="download-btn" href="releases" hidden>Baixar</a>
+    <a class="btn btn-ghost" href="https://github.com/willsantos/orotools/releases">Todas as releases</a>
+  </div>
+  <p id="download-note"></p>
+  <p class="fallback">
+    <a href="https://github.com/willsantos/orotools/releases">Sem JavaScript ou SO diferente? Baixe o asset certo na página de releases.</a>
+  </p>
+
+  <section id="assets">
+    <h2>Assets da última release <span class="muted" id="assets-tag"></span></h2>
+    <table id="assets-table"></table>
+  </section>
+
+  <h2>Quick start</h2>
+  <div class="install">
+    <span class="prompt">$</span>
+    <code>oro new meu-app --stack fastify-next --yes</code>
+    <button class="copy" data-copy="oro new meu-app --stack fastify-next --yes">copiar</button>
+  </div>
+  <p class="muted" style="margin-top:10px">
+    Stacks oficiais: <code>dotnet</code>, <code>dotnet-next</code>, <code>fastify-next</code>, <code>rails</code>.
+    Adote um repositório existente com <code>oro init</code>.
+  </p>
+</main>
+
+<footer class="wrap">
+  <a href="https://github.com/willsantos/orotools">GitHub</a> ·
+  <a href="https://github.com/willsantos/orotools/releases">Releases</a> ·
+  Licença MIT
+</footer>
+
+<script>
+(function () {
+  "use strict";
+
+  var RELEASES = "https://github.com/willsantos/orotools/releases";
+  var API_LATEST = "https://api.github.com/repos/willsantos/orotools/releases/latest";
+
+  function detect() {
+    var ua = navigator.userAgent + " " + navigator.platform;
+    var os = null;
+    if (/Win/i.test(ua)) os = "windows";
+    else if (/Mac|darwin/i.test(ua)) os = "darwin";
+    else if (/Linux/i.test(ua)) os = "linux";
+    var arch = /arm|aarch/i.test(ua) ? "arm64" : "amd64";
+    return { os: os, arch: arch };
+  }
+
+  function assetName(tag, os, arch) {
+    var version = tag.replace(/^v/, "");
+    var ext = os === "windows" ? "zip" : "tar.gz";
+    return "oro_" + version + "_" + os + "_" + arch + "." + ext;
+  }
+
+  function setupDownload(tag) {
+    var d = detect();
+    var btn = document.getElementById("download-btn");
+    var note = document.getElementById("download-note");
+    if (!d.os) return; // SO não suportado: mantém o link para releases (DIST-05)
+    var name = assetName(tag, d.os, d.arch);
+    btn.href = RELEASES + "/download/" + tag + "/" + name;
+    btn.hidden = false;
+    var label = { linux: "Linux", darwin: "macOS", windows: "Windows" }[d.os];
+    if (d.os === "darwin" && d.arch === "arm64") label += " (Apple Silicon)";
+    label += " · " + d.arch;
+    btn.textContent = "Baixar para " + label;
+    note.textContent = name;
+  }
+
+  function setupAssets(tag) {
+    var section = document.getElementById("assets");
+    var table = document.getElementById("assets-table");
+    document.getElementById("assets-tag").textContent = tag;
+    var rows = [];
+    ["linux", "darwin", "windows"].forEach(function (os) {
+      ["amd64", "arm64"].forEach(function (arch) {
+        var name = assetName(tag, os, arch);
+        rows.push([os + " " + arch, name]);
+      });
+    });
+    rows.push(["checksums", "checksums.txt"]);
+    table.innerHTML = rows.map(function (row) {
+      return "<tr><td>" + row[0] + "</td><td><a href=\"" +
+        RELEASES + "/download/" + tag + "/" + row[1] + "\">" + row[1] + "</a></td></tr>";
+    }).join("");
+    section.style.display = "block";
+  }
+
+  if (window.fetch) {
+    fetch(API_LATEST, { headers: { Accept: "application/vnd.github+json" } })
+      .then(function (r) { if (!r.ok) throw new Error(r.status); return r.json(); })
+      .then(function (rel) {
+        var tag = rel.tag_name;
+        if (!tag) throw new Error("sem tag");
+        setupDownload(tag);
+        setupAssets(tag);
+      })
+      .catch(function () { /* fallback: links para releases permanecem */ });
+  }
+
+  Array.prototype.forEach.call(document.querySelectorAll("button.copy"), function (btn) {
+    btn.addEventListener("click", function () {
+      var text = btn.getAttribute("data-copy");
+      function done() {
+        var old = btn.textContent;
+        btn.textContent = "copiado!";
+        setTimeout(function () { btn.textContent = old; }, 1500);
+      }
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).then(done);
+      } else {
+        var ta = document.createElement("textarea");
+        ta.value = text;
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand("copy");
+        document.body.removeChild(ta);
+        done();
+      }
+    });
+  });
+})();
+</script>
+</body>
+</html>

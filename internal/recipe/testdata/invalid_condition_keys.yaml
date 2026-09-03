@@ -1,0 +1,9 @@
+version: 1
+name: condition-keys
+
+steps:
+  - id: bad-cond
+    type: message
+    text: x
+    when:
+      bogus_key: yes

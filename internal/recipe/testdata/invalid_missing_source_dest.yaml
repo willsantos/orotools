@@ -1,0 +1,6 @@
+version: 1
+name: missing-source-dest
+steps:
+  - id: copy-incomplete
+    type: copy
+    source: files/x

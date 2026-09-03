@@ -1,0 +1,5 @@
+version: 2
+name: bad-version
+steps:
+  - type: message
+    text: x

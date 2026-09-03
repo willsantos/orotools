@@ -1,0 +1,8 @@
+version: 1
+name: minimal
+description: smallest valid recipe
+
+steps:
+  - id: greet
+    type: message
+    text: hello

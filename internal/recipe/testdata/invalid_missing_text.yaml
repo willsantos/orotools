@@ -1,0 +1,5 @@
+version: 1
+name: missing-text
+steps:
+  - id: msg-empty
+    type: message
