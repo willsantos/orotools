@@ -159,7 +159,7 @@ internal/
   executor/     executa steps com idempotência
   ...           demais pacotes por subsistema
 recipes/        recipes oficiais (dotnet, dotnet-next, rails, fastify-next)
-site/           landing page + install.sh (GitHub Pages)
+docs/           landing page + install.sh (GitHub Pages)
 ```
 
 ## Licença
