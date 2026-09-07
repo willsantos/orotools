@@ -221,3 +221,69 @@ func TestProjectWorkDirFallsBackToPath(t *testing.T) {
 		t.Fatalf("WorkDir = %q, want /custom", got)
 	}
 }
+
+// TestGroupRoundTrip: config com `group` preserva o campo no round-trip,
+// na ultima posicao do objeto (apos description) — dev-project-groups FR-2.
+func TestGroupRoundTrip(t *testing.T) {
+	base := t.TempDir()
+	path := filepath.Join(base, "projects.config.json")
+	config := `{
+  "projects": {
+    "beafaes": {
+      "name": "Bea Faes",
+      "path": "/home/x/beafaes",
+      "cwd": "/home/x/beafaes/apps/web",
+      "package_manager": "pnpm",
+      "dev_command": "pnpm dev",
+      "port": 3001,
+      "description": "Monorepo",
+      "group": "Clientes"
+    }
+  },
+  "settings": {
+    "log_dir": "",
+    "pid_dir": "",
+    "enforce_unique_ports": false
+  }
+}`
+	if err := os.WriteFile(path, []byte(config+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	orig, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, ok := cfg.Lookup("beafaes")
+	if !ok {
+		t.Fatal("project beafaes not found")
+	}
+	if p.Group != "Clientes" {
+		t.Fatalf("group = %q, want Clientes", p.Group)
+	}
+	out, err := cfg.Marshal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(orig, out) {
+		t.Fatalf("round-trip com group nao e byte-identico\n--- orig ---\n%s\n--- out ----\n%s",
+			orig, out)
+	}
+}
+
+// TestGroupOmittedWhenEmpty: projeto sem grupo nao emite o campo — o save
+// de um config legado continua byte-idêntico (FR-2/NFR-4).
+func TestGroupOmittedWhenEmpty(t *testing.T) {
+	cfg := &Config{}
+	cfg.Add("x", &Project{Name: "X", Path: "/x", DevCommand: "npm run dev"})
+	out, err := cfg.Marshal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(out, []byte("group")) {
+		t.Fatalf("projeto sem grupo emitiu campo group:\n%s", out)
+	}
+}

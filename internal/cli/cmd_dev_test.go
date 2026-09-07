@@ -57,7 +57,7 @@ func TestDevTableRendersWithoutCrash(t *testing.T) {
 		t.Fatal(err)
 	}
 	var buf bytes.Buffer
-	writeDevTable(&buf, cfg, t.TempDir())
+	writeDevTable(&buf, cfg, t.TempDir(), nil)
 	out := buf.String()
 	if !strings.Contains(out, "Atalho") {
 		t.Fatalf("table missing header:\n%s", out)
@@ -83,7 +83,7 @@ func TestDevTableUniformLineWidth(t *testing.T) {
 		PackageManager: "npm", DevCommand: "npm run dev", Port: &port,
 	})
 	var buf bytes.Buffer
-	writeDevTable(&buf, cfg, t.TempDir())
+	writeDevTable(&buf, cfg, t.TempDir(), nil)
 	out := buf.String()
 
 	if strings.Contains(out, "\x1b[") {
@@ -183,7 +183,7 @@ func TestDevListShowsManagedPid(t *testing.T) {
 	})
 
 	var buf bytes.Buffer
-	writeDevTable(&buf, cfg, t.TempDir())
+	writeDevTable(&buf, cfg, t.TempDir(), nil)
 	out := buf.String()
 	if !strings.Contains(out, "PID") {
 		t.Fatalf("tabela sem coluna PID:\n%s", out)
@@ -509,5 +509,184 @@ func TestRunDevStartBlocksDuplicatePortsInBatch(t *testing.T) {
 	}
 	if _, statErr := os.Stat(filepath.Join(filepath.Dir(configPath), ".dev-pids")); statErr == nil {
 		t.Error("nenhum processo deveria ter sido iniciado")
+	}
+}
+// groupsListCfg monta um config com dois grupos e um projeto sem grupo,
+// na ordem de insercao: web=Clientes, saas=SaaS, misc=sem grupo.
+func groupsListCfg() *devmgr.Config {
+	cfg := &devmgr.Config{}
+	cfg.Add("web", &devmgr.Project{Name: "Web", Path: "/w", DevCommand: "pnpm dev", Group: "Clientes"})
+	cfg.Add("saas", &devmgr.Project{Name: "SaaS App", Path: "/s", DevCommand: "npm run dev", Group: "SaaS"})
+	cfg.Add("misc", &devmgr.Project{Name: "Misc", Path: "/m", DevCommand: "npm run dev"})
+	return cfg
+}
+
+// TestDevListFiltersByGroup: `oro dev list clientes` exibe so as linhas do
+// grupo e o titulo identifica o filtro na forma gravada (FR-6/FR-8).
+func TestDevListFiltersByGroup(t *testing.T) {
+	var buf bytes.Buffer
+	writeDevTable(&buf, groupsListCfg(), "/base", []string{"clientes"})
+	out := buf.String()
+	if !strings.Contains(out, "web") {
+		t.Fatalf("filtro deveria exibir o projeto do grupo Clientes:\n%s", out)
+	}
+	if strings.Contains(out, "SaaS App") || strings.Contains(out, "misc") {
+		t.Fatalf("filtro deveria exibir SOMENTE o grupo Clientes:\n%s", out)
+	}
+	if !strings.Contains(out, "grupo: Clientes") {
+		t.Fatalf("titulo deveria indicar o filtro na forma gravada:\n%s", out)
+	}
+}
+
+// TestDevListFiltersUnionOfGroups: multiplos argumentos = uniao; titulo usa
+// "grupos:" com as formas gravadas, nao os argumentos crus (FR-6/FR-8).
+func TestDevListFiltersUnionOfGroups(t *testing.T) {
+	var buf bytes.Buffer
+	writeDevTable(&buf, groupsListCfg(), "/base", []string{"CLIENTES", "saas"})
+	out := buf.String()
+	if !strings.Contains(out, "web") || !strings.Contains(out, "SaaS App") {
+		t.Fatalf("uniao deveria exibir Clientes e SaaS:\n%s", out)
+	}
+	if strings.Contains(out, "misc") {
+		t.Fatalf("projeto sem grupo nao entra na uniao de grupos:\n%s", out)
+	}
+	if !strings.Contains(out, "grupos: Clientes, SaaS") {
+		t.Fatalf("titulo deveria listar os grupos casados:\n%s", out)
+	}
+}
+
+func TestValidateDevGroupsAcceptsCaseAccentVariants(t *testing.T) {
+	cfg := groupsListCfg()
+	cfg.Add("conf", &devmgr.Project{Name: "Conf", Path: "/c", Group: "Configurações"})
+	if err := validateDevGroups(cfg, []string{"clientes", "configuracoes"}); err != nil {
+		t.Fatalf("variantes de caixa/acento devem casar: %v", err)
+	}
+}
+
+func TestValidateDevGroupsRejectsUnknown(t *testing.T) {
+	err := validateDevGroups(groupsListCfg(), []string{"foo"})
+	if err == nil || !strings.Contains(err.Error(), `grupo "foo" não encontrado`) ||
+		!strings.Contains(err.Error(), "disponíveis: Clientes, SaaS") {
+		t.Fatalf("erro acionavel esperado, got: %v", err)
+	}
+}
+
+func TestValidateDevGroupsExplicitWhenNoGroups(t *testing.T) {
+	err := validateDevGroups(&devmgr.Config{}, []string{"foo"})
+	if err == nil || !strings.Contains(err.Error(), "nenhum projeto tem grupo configurado") {
+		t.Fatalf("mensagem explicita de config sem grupos esperada, got: %v", err)
+	}
+}
+
+// TestDevGroupColumnTruthTable cobre a tabela-verdade do FR-9: a coluna
+// Grupo so existe quando as linhas exibidas tem 2+ chaves distintas.
+func TestDevGroupColumnTruthTable(t *testing.T) {
+	render := func(cfg *devmgr.Config, filter []string) string {
+		var buf bytes.Buffer
+		writeDevTable(&buf, cfg, "/base", filter)
+		return buf.String()
+	}
+
+	t.Run("sem grupos: sem coluna", func(t *testing.T) {
+		cfg := &devmgr.Config{}
+		cfg.Add("a", &devmgr.Project{Name: "A", Path: "/a", DevCommand: "npm run dev"})
+		cfg.Add("b", &devmgr.Project{Name: "B", Path: "/b", DevCommand: "npm run dev"})
+		if out := render(cfg, nil); strings.Contains(out, "Grupo") {
+			t.Fatalf("config sem grupos nao deve ter coluna Grupo:\n%s", out)
+		}
+	})
+
+	t.Run("todos no mesmo grupo: sem coluna", func(t *testing.T) {
+		cfg := &devmgr.Config{}
+		cfg.Add("a", &devmgr.Project{Name: "A", Path: "/a", DevCommand: "npm run dev", Group: "Clientes"})
+		cfg.Add("b", &devmgr.Project{Name: "B", Path: "/b", DevCommand: "npm run dev", Group: "CLIENTES"})
+		if out := render(cfg, nil); strings.Contains(out, "Grupo") {
+			t.Fatalf("grupo unico entre todas as linhas nao deve ter coluna:\n%s", out)
+		}
+	})
+
+	t.Run("grupos mistos: coluna com — nos sem-grupo", func(t *testing.T) {
+		var buf bytes.Buffer
+		writeDevTable(&buf, groupsListCfg(), "/base", nil)
+		out := buf.String()
+		if !strings.Contains(out, "Grupo") {
+			t.Fatalf("grupos mistos devem ter coluna Grupo:\n%s", out)
+		}
+		if !strings.Contains(out, "Clientes") || !strings.Contains(out, "SaaS") {
+			t.Fatalf("coluna deve mostrar os grupos gravados:\n%s", out)
+		}
+		lines := strings.Split(out, "\n")
+		miscRow := -1
+		for i, ln := range lines {
+			if strings.Contains(ln, "misc") {
+				miscRow = i
+			}
+		}
+		if miscRow < 0 || !strings.Contains(lines[miscRow], "—") {
+			t.Fatalf("linha sem grupo deve mostrar — na coluna:\n%s", out)
+		}
+	})
+
+	t.Run("filtro de grupo unico: sem coluna", func(t *testing.T) {
+		var buf bytes.Buffer
+		writeDevTable(&buf, groupsListCfg(), "/base", []string{"clientes"})
+		out := buf.String()
+		if strings.Contains(out, "Grupo") {
+			t.Fatalf("filtro de grupo unico nao deve ter coluna (redundante):\n%s", out)
+		}
+	})
+
+	t.Run("uniao de grupos: com coluna", func(t *testing.T) {
+		var buf bytes.Buffer
+		writeDevTable(&buf, groupsListCfg(), "/base", []string{"clientes", "saas"})
+		out := buf.String()
+		if !strings.Contains(out, "Grupo") {
+			t.Fatalf("uniao de 2 grupos deve ter coluna Grupo:\n%s", out)
+		}
+	})
+}
+
+// TestDevTableUniformLineWidthWithGroupColumn: a coluna condicional nao pode
+// quebrar o alinhamento por display width.
+func TestDevTableUniformLineWidthWithGroupColumn(t *testing.T) {
+	cfg := &devmgr.Config{}
+	cfg.Add("web", &devmgr.Project{
+		Name: "ação-unição", Path: "/x", Cwd: "/x",
+		PackageManager: "pnpm", DevCommand: "pnpm dev", Group: "Configurações",
+	})
+	port := 3000
+	cfg.Add("api", &devmgr.Project{
+		Name: "ação-unição-çã", Path: "/y", Cwd: "/y",
+		PackageManager: "npm", DevCommand: "npm run dev", Port: &port,
+	})
+	var buf bytes.Buffer
+	writeDevTable(&buf, cfg, t.TempDir(), nil)
+	out := buf.String()
+	widths := map[int]bool{}
+	for _, ln := range strings.Split(strings.TrimRight(out, "\n"), "\n") {
+		if strings.Contains(ln, "│") {
+			widths[lipgloss.Width(ln)] = true
+		}
+	}
+	if len(widths) != 1 {
+		t.Fatalf("linhas da tabela com larguras diferentes %v:\n%s", widths, out)
+	}
+}
+
+// TestDevListMatchesAccentFilter: sugestao do review do PR#197 — o matching
+// acentuado (configuracoes -> Configurações) exercitado no caminho da tabela,
+// nao apenas no helper validateDevGroups.
+func TestDevListMatchesAccentFilter(t *testing.T) {
+	cfg := &devmgr.Config{}
+	cfg.Add("conf", &devmgr.Project{Name: "Conf", Path: "/c", DevCommand: "npm run dev", Group: "Configurações"})
+	cfg.Add("web", &devmgr.Project{Name: "Web", Path: "/w", DevCommand: "pnpm dev", Group: "Clientes"})
+	var buf bytes.Buffer
+	writeDevTable(&buf, cfg, "/base", []string{"configuracoes"})
+	out := buf.String()
+	if !strings.Contains(out, "conf") {
+		t.Fatalf("filtro acentuado deveria exibir o grupo Configurações:\n%s", out)
+	}
+	if strings.Contains(out, "web") || strings.Contains(out, "Grupo") {
+		t.Fatalf("filtro de grupo unico: so as linhas do grupo, sem coluna:\n%s", out)
 	}
 }

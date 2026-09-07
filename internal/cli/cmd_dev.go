@@ -119,21 +119,58 @@ func devLogPath(cfg *devmgr.Config, key string) (string, error) {
 
 func newDevListCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:   "list",
-		Short: "Lista projetos cadastrados",
-		RunE: func(cmd *cobra.Command, _ []string) error {
-			cfg, err := loadDev(cmd)
-			if err != nil {
-				return err
-			}
-			configPath, err := resolveDevPath(cmd)
-			if err != nil {
-				return err
-			}
-			writeDevTable(cmd.OutOrStdout(), cfg, filepath.Dir(configPath))
-			return nil
+		Use:   "list [grupo...]",
+		Short: "Lista projetos cadastrados (opcionalmente filtrando por grupo)",
+		// Grupo inexistente é resultado operacional reportado na mensagem —
+		// mesmo padrão do comando dev pai; usage poluiria a saída.
+		SilenceUsage: true,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runDevList(cmd, args)
 		},
 	}
+}
+
+// runDevList implements `oro dev list [grupo...]`: sem argumentos lista
+// todos os projetos; com argumentos filtra pela união dos grupos casados
+// (dev-project-groups FR-6).
+func runDevList(cmd *cobra.Command, args []string) error {
+	cfg, err := loadDev(cmd)
+	if err != nil {
+		return err
+	}
+	configPath, err := resolveDevPath(cmd)
+	if err != nil {
+		return err
+	}
+	if err := validateDevGroups(cfg, args); err != nil {
+		return err
+	}
+	writeDevTable(cmd.OutOrStdout(), cfg, filepath.Dir(configPath), args)
+	return nil
+}
+
+// validateDevGroups rejects filter args that match no group derived from
+// the config (FR-7), listing the available ones — matching is GroupKey
+// based (FR-4), so case/accent variants of an existing group pass.
+func validateDevGroups(cfg *devmgr.Config, args []string) error {
+	if len(args) == 0 {
+		return nil
+	}
+	groups := cfg.Groups()
+	available := make(map[string]struct{}, len(groups))
+	for _, g := range groups {
+		available[devmgr.GroupKey(g)] = struct{}{}
+	}
+	for _, a := range args {
+		if _, ok := available[devmgr.GroupKey(a)]; ok {
+			continue
+		}
+		if len(available) == 0 {
+			return errors.New(`nenhum projeto tem grupo configurado (campo "group" no projects.config.json)`)
+		}
+		return fmt.Errorf("grupo %q não encontrado; disponíveis: %s", a, strings.Join(groups, ", "))
+	}
+	return nil
 }
 
 // projectMarker reports the status glyph and the managed pid (FR-3):
@@ -162,17 +199,32 @@ func asciiMarker(m string) string {
 	}
 }
 
-func writeDevTable(w io.Writer, cfg *devmgr.Config, base string) {
+func writeDevTable(w io.Writer, cfg *devmgr.Config, base string, filter []string) {
 	pal := ui.PaletteFor(w)
 	tty := ui.IsTTY(w)
 
+	// FR-6: filtro pela união dos grupos casados; matching por GroupKey,
+	// mesmo critério da validação de args em validateDevGroups.
+	var filterKeys map[string]struct{}
+	if len(filter) > 0 {
+		filterKeys = make(map[string]struct{}, len(filter))
+		for _, a := range filter {
+			filterKeys[devmgr.GroupKey(a)] = struct{}{}
+		}
+	}
+
 	type row struct {
-		key, name, pm, port, marker, pid string
+		key, name, group, pm, port, marker, pid string
 	}
 	var rows []row
 	var markers []string
 	for _, k := range cfg.Keys() {
 		p, _ := cfg.Lookup(k)
+		if filterKeys != nil {
+			if _, ok := filterKeys[devmgr.GroupKey(p.Group)]; !ok {
+				continue
+			}
+		}
 		port := "—"
 		if p.Port != nil {
 			port = strconv.Itoa(*p.Port)
@@ -185,14 +237,55 @@ func writeDevTable(w io.Writer, cfg *devmgr.Config, base string) {
 		if pid > 0 {
 			pidCell = strconv.Itoa(pid)
 		}
-		rows = append(rows, row{k, p.Name, p.PackageManager, port, m, pidCell})
+		rows = append(rows, row{k, p.Name, strings.TrimSpace(p.Group), p.PackageManager, port, m, pidCell})
 		markers = append(markers, m)
 	}
+
+	// FR-8: no modo filtrado o título identifica os grupos na forma gravada
+	// (não os argumentos crus do usuário).
+	title := "Projetos disponíveis em: " + base
+	if len(filterKeys) > 0 {
+		var matched []string
+		for _, g := range cfg.Groups() {
+			if _, ok := filterKeys[devmgr.GroupKey(g)]; ok {
+				matched = append(matched, g)
+			}
+		}
+		if len(matched) > 0 {
+			label := "grupo"
+			if len(matched) > 1 {
+				label = "grupos"
+			}
+			title += fmt.Sprintf(" — %s: %s", label, strings.Join(matched, ", "))
+		}
+	}
+
+	// FR-9: a coluna Grupo existe somente quando as linhas exibidas têm 2+
+	// chaves de grupo distintas (o sem-grupo contribui com a chave "") —
+	// config sem grupos e filtro de grupo único a omitem por redundância.
+	groupKeys := make(map[string]struct{}, len(rows))
+	for _, r := range rows {
+		groupKeys[devmgr.GroupKey(r.group)] = struct{}{}
+	}
+	showGroup := len(groupKeys) >= 2
+
+	// Índices de coluna condicionais (Grupo entra entre Nome e PM; PM segue
+	// com o estilo default logo após).
+	groupCol, portCol, pidCol := -1, 4, 5
+	if showGroup {
+		groupCol, portCol, pidCol = 3, 5, 6
+	}
+	headers := make([]string, 0, 7)
+	headers = append(headers, "Status", "Atalho", "Nome")
+	if showGroup {
+		headers = append(headers, "Grupo")
+	}
+	headers = append(headers, "PM", "Porta", "PID")
 
 	// lipgloss/table alinha as colunas por display width (ANSI-aware), o que
 	// mantém marcadores multibyte (▶/○) e ASCII (!) na mesma coluna.
 	t := table.New().
-		Headers("Status", "Atalho", "Nome", "PM", "Porta", "PID").
+		Headers(headers...).
 		Border(lipgloss.NormalBorder()).
 		BorderStyle(pal.Muted).
 		StyleFunc(func(r, c int) lipgloss.Style {
@@ -211,13 +304,23 @@ func writeDevTable(w io.Writer, cfg *devmgr.Config, base string) {
 				}
 			case 1:
 				return pal.Key.Padding(0, 1)
-			case 4, 5:
+			case groupCol, portCol, pidCol:
 				return pal.Muted.Padding(0, 1)
 			}
 			return lipgloss.NewStyle().Padding(0, 1)
 		})
 	for _, r := range rows {
-		t.Row(r.marker, r.key, r.name, r.pm, r.port, r.pid)
+		cells := make([]string, 0, 7)
+		cells = append(cells, r.marker, r.key, r.name)
+		if showGroup {
+			groupCell := r.group
+			if groupCell == "" {
+				groupCell = "—"
+			}
+			cells = append(cells, groupCell)
+		}
+		cells = append(cells, r.pm, r.port, r.pid)
+		t.Row(cells...)
 	}
 
 	run, warn, stop := "▶", "!", "○"
@@ -227,7 +330,7 @@ func writeDevTable(w io.Writer, cfg *devmgr.Config, base string) {
 	legend := fmt.Sprintf(" %s rodando   %s porta ocupada   %s parado",
 		pal.Success.Render(run), pal.Warn.Render(warn), pal.Muted.Render(stop))
 
-	fmt.Fprintln(w, pal.Title.Render("Projetos disponíveis em: "+base))
+	fmt.Fprintln(w, pal.Title.Render(title))
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, t.Render())
 	fmt.Fprintln(w, legend)
@@ -667,10 +770,19 @@ func newDevAddCmd() *cobra.Command {
 
 var errWizardCancel = errors.New("cancelado pelo usuário")
 
+// devGroupPlaceholder builds the "Grupo" step suggestion: existing groups
+// when there are any, otherwise a hint that empty means ungrouped.
+func devGroupPlaceholder(cfg *devmgr.Config) string {
+	if gs := cfg.Groups(); len(gs) > 0 {
+		return strings.Join(gs, ", ")
+	}
+	return "sem grupo"
+}
+
 func runDevAdd(cmd *cobra.Command, cfg *devmgr.Config, configPath string) error {
 	status := ui.NewStatus(cmd.OutOrStdout())
 
-	var key, name, path, workDir, pm, devCmd, desc string
+	var key, name, path, workDir, pm, devCmd, desc, group string
 
 	design := []huh.Field{
 		huh.NewInput().Title("Atalho curto (ex: meuprojeto)").Value(&key),
@@ -683,6 +795,9 @@ func runDevAdd(cmd *cobra.Command, cfg *devmgr.Config, configPath string) error 
 		).Value(&pm),
 		huh.NewInput().Title("Comando dev").Value(&devCmd),
 		huh.NewInput().Title("Descrição curta").Value(&desc),
+		// dev-project-groups FR-11: grupo opcional, free-form — grupo novo
+		// nasce no primeiro uso; ENTER vazio = sem grupo.
+		huh.NewInput().Title("Grupo (opcional)").Value(&group).Placeholder(devGroupPlaceholder(cfg)),
 	}
 	if err := huh.NewForm(huh.NewGroup(design...)).Run(); err != nil {
 		return errWizardCancel
@@ -702,6 +817,7 @@ func runDevAdd(cmd *cobra.Command, cfg *devmgr.Config, configPath string) error 
 	if devCmd == "" {
 		devCmd = fmt.Sprintf("%s run dev", pm)
 	}
+	group = strings.TrimSpace(group)
 
 	// Sem sobrescrita silenciosa: um atalho já registrado é rejeitado.
 	if _, ok := cfg.Lookup(key); ok {
@@ -719,6 +835,7 @@ func runDevAdd(cmd *cobra.Command, cfg *devmgr.Config, configPath string) error 
 		PackageManager: pm,
 		DevCommand:     devCmd,
 		Description:    desc,
+		Group:          group,
 	}
 
 	// Sugestão de porta só com o comando dev já conhecido (FR-17).

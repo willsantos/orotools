@@ -14,6 +14,9 @@ import (
 )
 
 // Project mirrors one entry of the `projects` object in projects.config.json.
+// Group is optional (dev-project-groups FR-1); it must stay last so the
+// emitted JSON appends the field after description, keeping legacy configs
+// byte-identical on round-trip (omitempty + field order, FR-2).
 type Project struct {
 	Name           string `json:"name"`
 	Path           string `json:"path"`
@@ -22,6 +25,7 @@ type Project struct {
 	DevCommand     string `json:"dev_command"`
 	Port           *int   `json:"port"`
 	Description    string `json:"description"`
+	Group          string `json:"group,omitempty"`
 }
 
 // WorkDir returns the directory the dev process runs in: Cwd, falling back

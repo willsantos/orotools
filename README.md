@@ -141,7 +141,8 @@ Gerencia os dev servers de projetos a partir do `projects.config.json`
 (`$CLIENTES_HOME`):
 
 ```bash
-oro dev                  # tabela de projetos: ▶ rodando   ! porta ocupada   ○ parado
+oro dev list             # tabela de projetos: ▶ rodando   ! porta ocupada   ○ parado
+oro dev list clientes    # filtra pelo grupo (ignora caixa e acentos)
 oro dev start api web    # inicia projetos em paralelo
 oro dev stop api         # para o projeto (kill da árvore de processos)
 ```
