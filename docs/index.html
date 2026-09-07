@@ -78,6 +78,38 @@
   #assets a { color: var(--gold); text-decoration: none; font-family: ui-monospace, Menlo, monospace; }
   #assets a:hover { text-decoration: underline; }
   .muted { color: var(--muted); font-size: 14px; }
+  h3 { font-size: 15px; margin: 28px 0 10px; }
+  pre.code {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 14px 16px;
+    font: 13px/1.55 ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    overflow-x: auto;
+    margin: 12px 0;
+  }
+  pre.code .hl { color: var(--gold); }
+  table.fields { width: 100%; border-collapse: collapse; font-size: 14px; }
+  table.fields th {
+    text-align: left; color: var(--muted); font-weight: 600;
+    font-size: 12px; text-transform: uppercase; letter-spacing: .04em;
+    padding: 6px 4px; border-bottom: 1px solid var(--border);
+  }
+  table.fields td {
+    padding: 7px 4px; border-bottom: 1px solid var(--border);
+    vertical-align: top;
+  }
+  table.fields td:first-child {
+    font-family: ui-monospace, Menlo, monospace;
+    color: var(--gold); font-size: 13px; white-space: nowrap;
+  }
+  ul.docs { padding-left: 20px; margin: 10px 0; }
+  ul.docs li { margin: 6px 0; }
+  ul.docs code { font-family: ui-monospace, Menlo, monospace; font-size: 14px; }
+  main code {
+    font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    font-size: 0.92em;
+  }
   footer {
     margin-top: 64px;
     border-top: 1px solid var(--border);
@@ -131,6 +163,80 @@
     Stacks oficiais: <code>dotnet</code>, <code>dotnet-next</code>, <code>fastify-next</code>, <code>rails</code>.
     Adote um repositório existente com <code>oro init</code>.
   </p>
+
+  <h2>Dev manager — o arquivo <code>projects.config.json</code></h2>
+  <p class="muted">
+    O <code>oro dev</code> gerencia os dev servers dos seus projetos a partir do
+    arquivo <code>projects.config.json</code> no diretório <code>$CLIENTES_HOME</code>
+    (ou no caminho passado em <code>--config</code>). Você pode criá-lo com o wizard
+    <code>oro dev add</code> ou escrevê-lo à mão:
+  </p>
+  <pre class="code">{
+  "projects": {
+    "beafaes": {
+      "name": "Bea Faes (Sistema)",
+      "path": "/home/voce/dev/clientes/beafaes",
+      "cwd": "/home/voce/dev/clientes/beafaes/apps/web",
+      "package_manager": "pnpm",
+      "dev_command": "pnpm dev",
+      "port": 3001,
+      "description": "Monorepo Next.js - Sistema Bea Faes",
+      <span class="hl">"group": "Clientes"</span>
+    },
+    "bigodi-p": {
+      "name": "Bigodinhos (Prospect)",
+      "path": "/home/voce/dev/clientes/prospect",
+      "cwd": "/home/voce/dev/clientes/prospect/bigodinhos/app",
+      "package_manager": "pnpm",
+      "dev_command": "pnpm dev",
+      "port": 5178,
+      "description": "Vite + React 19 - Proposta Bigodinhos",
+      <span class="hl">"group": "Prospects"</span>
+    }
+  },
+  "settings": {
+    "log_dir": ".dev-logs",
+    "pid_dir": ".dev-pids",
+    "enforce_unique_ports": true
+  }
+}</pre>
+  <p class="muted">Em destaque, o campo <code>group</code> — a novidade que organiza os projetos. Detalhes de cada campo:</p>
+
+  <table class="fields">
+    <tr><th>Campo</th><th>Descrição</th></tr>
+    <tr><td>chave do projeto</td><td>A chave (<code>"beafaes"</code>, <code>"bigodi-p"</code>) é o atalho usado nos comandos: <code>oro dev beafaes</code> inicia o projeto.</td></tr>
+    <tr><td>name</td><td>Nome exibido na tabela do <code>oro dev list</code>.</td></tr>
+    <tr><td>path</td><td>Raiz do projeto.</td></tr>
+    <tr><td>cwd</td><td>Diretório onde o comando roda (monorepos); se vazio, é o próprio <code>path</code>.</td></tr>
+    <tr><td>package_manager</td><td><code>npm</code> ou <code>pnpm</code>.</td></tr>
+    <tr><td>dev_command</td><td>Comando do dev server. Menções a <code>vite</code>/<code>next</code> definem a faixa de porta sugerida pelo <code>add</code> (next 3001–3099, vite 5174–5199).</td></tr>
+    <tr><td>port</td><td>Porta do serviço; <code>null</code> para projetos sem porta (ex.: workers). É a base da checagem de prontidão pós-start e do <code>oro dev open</code>.</td></tr>
+    <tr><td>description</td><td>Descrição curta.</td></tr>
+    <tr><td>group</td><td>Grupo do projeto (opcional) — veja abaixo.</td></tr>
+  </table>
+
+  <h3>Grupos</h3>
+  <ul class="docs">
+    <li><strong>Sem cadastro</strong> — o conjunto de grupos é derivado do campo
+      <code>group</code> dos projetos: um grupo existe a partir do primeiro projeto que o
+      usa. O wizard <code>oro dev add</code> pede o grupo (opcional) e sugere os existentes.</li>
+    <li><strong>Filtre por grupo</strong> — <code>oro dev list clientes</code> mostra só o
+      grupo; <code>oro dev list clientes prospects</code> mostra a união. Grupo inexistente
+      é erro, listando os disponíveis.</li>
+    <li><strong>Matching ignora caixa e acentos</strong> — <code>clientes</code> casa
+      <code>Clientes</code>; <code>configuracoes</code> casa <code>Configurações</code>.
+      A exibição usa sempre a grafia gravada no config.</li>
+    <li><strong>Migração zero</strong> — config antigo sem <code>group</code> funciona sem
+      alteração nenhuma, e o <code>oro dev</code> preserva o arquivo byte a byte ao salvar.</li>
+  </ul>
+
+  <h3>Settings</h3>
+  <table class="fields">
+    <tr><th>Campo</th><th>Descrição</th></tr>
+    <tr><td>log_dir</td><td>Diretório dos logs; default <code>.dev-logs</code> ao lado do config (caminho relativo ou absoluto).</td></tr>
+    <tr><td>pid_dir</td><td>Diretório dos pids; default <code>.dev-pids</code>, mesmo critério.</td></tr>
+    <tr><td>enforce_unique_ports</td><td>Com <code>true</code>, o <code>start</code> fixa a porta configurada no comando: flags do vite/next/wrangler, <code>-- --port</code> para wrappers npm e env <code>PORT</code>/<code>HOST</code>. Sem ele, o comando roda como está.</td></tr>
+  </table>
 </main>
 
 <footer class="wrap">
