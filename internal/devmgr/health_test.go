@@ -11,7 +11,11 @@ import (
 // writePidFor writes a pid file for key inside a temp pidDir.
 func writePidFor(t *testing.T, pidDir, key string, pid int) {
 	t.Helper()
-	if err := os.WriteFile(pidPath(pidDir, key), []byte(strconv.Itoa(pid)+"\n"), 0o644); err != nil {
+	pp, err := PidFile(pidDir, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(pp, []byte(strconv.Itoa(pid)+"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 }

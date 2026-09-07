@@ -6,6 +6,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -148,25 +149,60 @@ func TestDevMarker(t *testing.T) {
 		PackageManager: "npm", DevCommand: "npm run dev",
 	})
 	proj, _ := cfg.Lookup("quiet")
-	if m := projectMarker(cfg, proj, "quiet"); m != "○" {
-		t.Fatalf("marker = %q, want ○", m)
+	if m, pid := projectMarker(cfg, proj, "quiet"); m != "○" || pid != 0 {
+		t.Fatalf("marker/pid = %q/%d, want ○/0", m, pid)
 	}
 }
 
-func TestDevKeyValid(t *testing.T) {
-	valid := []string{"api", "meu-projeto"}
-	invalid := []string{"", ".", "..", "../x", "a/b", `a\b`, "a\x00b"}
-	for _, k := range valid {
-		if !devKeyValid(k) {
-			t.Errorf("devKeyValid(%q) = false, want true", k)
-		}
+// TestDevListShowsManagedPid: processo iniciado pelo oro mostra o PID na
+// tabela; projeto parado e ocupante externo mostram '—' (FR-3/FR-4).
+func TestDevListShowsManagedPid(t *testing.T) {
+	work := t.TempDir()
+	cfg := &devmgr.Config{}
+	cfg.Settings.PidDir = filepath.Join(t.TempDir(), "pids")
+	cfg.Settings.LogDir = filepath.Join(t.TempDir(), "logs")
+	cfg.Add("live", &devmgr.Project{
+		Name: "Live", Path: work, Cwd: work,
+		PackageManager: "sh", DevCommand: "sh -c 'sleep 5'",
+	})
+	pid, err := devmgr.Start(cfg, "live", devmgr.BuildStartCommand("sh -c 'sleep 5'", nil, false))
+	if err != nil {
+		t.Fatalf("start: %v", err)
 	}
-	for _, k := range invalid {
-		if devKeyValid(k) {
-			t.Errorf("devKeyValid(%q) = true, want false", k)
+	defer func() { _ = devmgr.Stop(cfg, "live") }()
+
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Skip("cannot bind")
+	}
+	defer l.Close()
+	extPort := l.Addr().(*net.TCPAddr).Port
+	cfg.Add("extern", &devmgr.Project{
+		Name: "Extern", Path: work, Cwd: work,
+		PackageManager: "sh", DevCommand: "sh -c 'sleep 5'", Port: &extPort,
+	})
+
+	var buf bytes.Buffer
+	writeDevTable(&buf, cfg, t.TempDir())
+	out := buf.String()
+	if !strings.Contains(out, "PID") {
+		t.Fatalf("tabela sem coluna PID:\n%s", out)
+	}
+	if !strings.Contains(out, strconv.Itoa(pid)) {
+		t.Fatalf("tabela sem o PID %d do projeto gerenciado:\n%s", pid, out)
+	}
+	for _, ln := range strings.Split(out, "\n") {
+		if strings.Contains(ln, " extern ") {
+			if !strings.Contains(ln, "!") || strings.Contains(ln, strconv.Itoa(pid)) {
+				t.Fatalf("linha do ocupante externo sem marker '!' ou com pid alheio: %q", ln)
+			}
+		}
+		if strings.Contains(ln, " live ") && !strings.Contains(ln, strconv.Itoa(pid)) {
+			t.Fatalf("linha do projeto gerenciado sem o PID %d: %q", pid, ln)
 		}
 	}
 }
+
 
 func TestDevLogPathRejectsTraversal(t *testing.T) {
 	cfg := &devmgr.Config{}
@@ -236,8 +272,12 @@ func devStartProjectsConfig(t *testing.T, entries map[string]*devmgr.Project) st
 // don't leak sleep processes.
 func stopStartedProject(t *testing.T, configPath, key string) {
 	t.Helper()
-	if err := devmgr.Stop(filepath.Join(filepath.Dir(configPath), ".dev-pids"), key); err != nil {
+	cfg, err := devmgr.Load(configPath)
+	if err != nil {
 		t.Fatal(err)
+	}
+	if st := devmgr.Stop(cfg, key); st != devmgr.Stopped {
+		t.Fatalf("stop %s = %v, want Stopped", key, st)
 	}
 }
 
@@ -325,6 +365,59 @@ func TestRunDevStartNoWaitSkipsReadiness(t *testing.T) {
 		if strings.Contains(out, unwanted) {
 			t.Fatalf("--no-wait não deveria verificar prontidão (%q):\n%s", unwanted, out)
 		}
+	}
+}
+
+// TestDevStatusWarnsExternalOccupant: projeto parado com a porta configurada
+// ocupada sai como aviso de processo não gerenciado (FR-4), e não como o
+// genérico "nenhum projeto rodando".
+func TestDevStatusWarnsExternalOccupant(t *testing.T) {
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Skip("cannot bind")
+	}
+	defer l.Close()
+	port := l.Addr().(*net.TCPAddr).Port
+	configPath := devStartConfig(t, false, map[string]int{"web": port})
+
+	cmd := fakeDevCmd(configPath)
+	var buf bytes.Buffer
+	cmd.SetOut(&buf)
+	if err := newDevStatusCmd().RunE(cmd, nil); err != nil {
+		t.Fatal(err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "porta "+strconv.Itoa(port)+" ocupada por processo externo") {
+		t.Fatalf("esperado aviso de ocupante externo na porta %d, got:\n%s", port, out)
+	}
+	if strings.Contains(out, "nenhum projeto rodando") {
+		t.Fatalf("ocupante externo não deve virar 'nenhum projeto rodando':\n%s", out)
+	}
+}
+
+// TestDevStopReportsExternalOccupant: stop de projeto não gerenciado com a
+// porta ocupada informa o ocupante externo (FR-7), sem sinalizar ninguém.
+func TestDevStopReportsExternalOccupant(t *testing.T) {
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Skip("cannot bind")
+	}
+	defer l.Close()
+	port := l.Addr().(*net.TCPAddr).Port
+	configPath := devStartConfig(t, false, map[string]int{"web": port})
+
+	cmd := fakeDevCmd(configPath)
+	var buf bytes.Buffer
+	cmd.SetOut(&buf)
+	if err := runDevStop(cmd, []string{"web"}); err != nil {
+		t.Fatal(err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "porta "+strconv.Itoa(port)+" ocupada por processo externo") {
+		t.Fatalf("esperado aviso de ocupante externo no stop, got:\n%s", out)
+	}
+	if strings.Contains(out, "+ web") {
+		t.Fatalf("stop de projeto inexistente impresso como sucesso:\n%s", out)
 	}
 }
 

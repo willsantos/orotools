@@ -128,7 +128,7 @@ func CheckStartPorts(cfg *Config, keys []string) error {
 		if !ok || p.Port == nil {
 			continue // unknown keys and portless workers surface in Start's path
 		}
-		if IsRunning(cfg.Settings.PidDir, k) {
+		if CheckProcess(cfg, k).Running {
 			continue // a running project legitimately holds its own port
 		}
 		port := *p.Port

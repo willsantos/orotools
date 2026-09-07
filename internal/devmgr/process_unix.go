@@ -80,6 +80,10 @@ func groupGone(pid int) bool {
 	return false
 }
 
+// groupAlive reports whether the process group still has any member — a
+// dead leader with orphaned children keeps the group stoppable (FR-8).
+func groupAlive(pid int) bool { return !groupGone(pid) }
+
 // reap attempts a non-blocking wait on the direct child pid, cleaning up a
 // zombie if it already exited. Returns true once the child is known gone.
 func reap(pid int) (bool, error) {

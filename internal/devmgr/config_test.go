@@ -128,3 +128,96 @@ func TestResolveConfigPath(t *testing.T) {
 		t.Fatal("expected error without CLIENTES_HOME")
 	}
 }
+
+// TestResolveConfigPathAbsAnchor: CLIENTES_HOME relativo não pode gerar
+// âncora relativa para os dirs de pid/log — o resultado é sempre absoluto
+// (dev-pid-tracking FR-1).
+func TestResolveConfigPathAbsAnchor(t *testing.T) {
+	got, err := ResolveConfigPath("rel/clientes", "")
+	if err != nil {
+		t.Fatal(err.Error())
+	}
+	if !filepath.IsAbs(got) {
+		t.Fatalf("got %q, want absolute", got)
+	}
+	if filepath.Base(got) != "projects.config.json" {
+		t.Fatalf("got %q", got)
+	}
+}
+
+// writeDirsConfig writes a minimal config with the given raw settings JSON
+// and returns its path.
+func writeDirsConfig(t *testing.T, base, settings string) string {
+	t.Helper()
+	path := filepath.Join(base, "projects.config.json")
+	config := `{"projects":{},"settings":` + settings + `}`
+	if err := os.WriteFile(path, []byte(config), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+// TestLoadAnchorsDirsIndependently: cada campo é resolvido por si — vazio
+// vira o default, relativo ancora no dir do config (dev-pid-tracking FR-1).
+func TestLoadAnchorsDirsIndependently(t *testing.T) {
+	base := t.TempDir()
+	cfg, err := Load(writeDirsConfig(t, base,
+		`{"log_dir":"logs","pid_dir":"","enforce_unique_ports":false}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := cfg.PidDir(), filepath.Join(base, ".dev-pids"); got != want {
+		t.Fatalf("pid dir = %q, want %q (pid_dir vazio vira default)", got, want)
+	}
+	if got, want := cfg.LogDir(), filepath.Join(base, "logs"); got != want {
+		t.Fatalf("log dir = %q, want %q (relativo ancora no dir do config)", got, want)
+	}
+	if cfg.Settings.PidDir != "" || cfg.Settings.LogDir != "logs" {
+		t.Fatalf("Settings devem preservar os valores crus: %+v", cfg.Settings)
+	}
+}
+
+func TestLoadKeepsAbsoluteDirs(t *testing.T) {
+	base := t.TempDir()
+	pidDir := filepath.Join(t.TempDir(), "abs-pids")
+	cfg, err := Load(writeDirsConfig(t, base,
+		`{"log_dir":"logs","pid_dir":"`+pidDir+`","enforce_unique_ports":false}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := cfg.PidDir(); got != pidDir {
+		t.Fatalf("pid dir = %q, want %q (absoluto inalterado)", got, pidDir)
+	}
+}
+
+// TestMarshalKeepsRawDirs: Save/Marshal nunca persistem os caminhos
+// resolvidos — o config no disco continua com os valores crus (NFR-4).
+func TestMarshalKeepsRawDirs(t *testing.T) {
+	base := t.TempDir()
+	cfg, err := Load(writeDirsConfig(t, base,
+		`{"log_dir":"logs","pid_dir":".dev-pids","enforce_unique_ports":false}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := cfg.Marshal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(out, []byte(`".dev-pids"`)) || !bytes.Contains(out, []byte(`"logs"`)) {
+		t.Fatalf("marshal perdeu os valores crus:\n%s", out)
+	}
+	if bytes.Contains(out, []byte(base)) {
+		t.Fatalf("marshal vazou caminho resolvido:\n%s", out)
+	}
+}
+
+func TestProjectWorkDirFallsBackToPath(t *testing.T) {
+	p := &Project{Path: "/base"}
+	if got := p.WorkDir(); got != "/base" {
+		t.Fatalf("WorkDir = %q, want /base", got)
+	}
+	p.Cwd = "/custom"
+	if got := p.WorkDir(); got != "/custom" {
+		t.Fatalf("WorkDir = %q, want /custom", got)
+	}
+}

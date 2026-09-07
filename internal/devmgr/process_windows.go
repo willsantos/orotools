@@ -38,3 +38,7 @@ func procSysAttr() *syscall.SysProcAttr {
 func stopGroup(pid int) {
 	_ = exec.Command("taskkill", "/PID", strconv.Itoa(pid), "/T", "/F").Run()
 }
+
+// groupAlive is always true on Windows: there are no process groups to
+// probe, and taskkill on a dead pid is a harmless no-op.
+func groupAlive(pid int) bool { return true }

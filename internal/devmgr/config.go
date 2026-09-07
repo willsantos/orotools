@@ -24,6 +24,16 @@ type Project struct {
 	Description    string `json:"description"`
 }
 
+// WorkDir returns the directory the dev process runs in: Cwd, falling back
+// to Path when Cwd is empty — the process must spawn in the same place
+// regardless of where oro was invoked from (dev-pid-tracking FR-2).
+func (p *Project) WorkDir() string {
+	if p.Cwd != "" {
+		return p.Cwd
+	}
+	return p.Path
+}
+
 // Settings mirrors the `settings` object in projects.config.json.
 type Settings struct {
 	LogDir            string `json:"log_dir"`
@@ -38,6 +48,48 @@ type Config struct {
 	projects map[string]*Project
 	order    []string
 	Settings Settings
+
+	// pid/log dirs anchored by Load to the config's directory (FR-1). Empty
+	// when the Config was hand-built — the accessors then fall back to the
+	// raw Settings values.
+	pidDirResolved string
+	logDirResolved string
+}
+
+// PidDir returns the pid directory: anchored to the config's directory when
+// the config was loaded from disk, Settings.PidDir verbatim otherwise.
+func (c *Config) PidDir() string {
+	if c.pidDirResolved != "" {
+		return c.pidDirResolved
+	}
+	return c.Settings.PidDir
+}
+
+// LogDir is PidDir's counterpart for the log directory.
+func (c *Config) LogDir() string {
+	if c.logDirResolved != "" {
+		return c.logDirResolved
+	}
+	return c.Settings.LogDir
+}
+
+// resolveDirs anchors pid_dir/log_dir independently of the invocation CWD
+// (FR-1), each field on its own: empty → default subdirectory of the config
+// dir; relative → joined with the config dir; absolute → unchanged. Settings
+// keeps the raw values so Save/Marshal never persist the resolved paths.
+func (c *Config) resolveDirs(base string) {
+	c.pidDirResolved = anchorDir(c.Settings.PidDir, base, ".dev-pids")
+	c.logDirResolved = anchorDir(c.Settings.LogDir, base, ".dev-logs")
+}
+
+func anchorDir(dir, base, def string) string {
+	if dir == "" {
+		return filepath.Join(base, def)
+	}
+	if filepath.IsAbs(dir) {
+		return filepath.Clean(dir)
+	}
+	return filepath.Join(base, dir)
 }
 
 var (
@@ -108,7 +160,9 @@ func (c *Config) Count() int {
 }
 
 // ResolveConfigPath returns the config path honoring --config override,
-// falling back to $CLIENTES_HOME/projects.config.json (FR-3).
+// falling back to $CLIENTES_HOME/projects.config.json (FR-3). The result is
+// always absolute so the anchor used for relative pid/log dirs does not
+// depend on the invocation CWD (FR-1).
 func ResolveConfigPath(clientsHome, override string) (string, error) {
 	if override != "" {
 		return filepath.Abs(override)
@@ -116,7 +170,7 @@ func ResolveConfigPath(clientsHome, override string) (string, error) {
 	if clientsHome == "" {
 		return "", errors.New("devmgr: CLIENTES_HOME not set and no --config given")
 	}
-	return filepath.Join(clientsHome, "projects.config.json"), nil
+	return filepath.Abs(filepath.Join(clientsHome, "projects.config.json"))
 }
 
 // Load reads and parses the config at path.
@@ -132,6 +186,7 @@ func Load(path string) (*Config, error) {
 	if err := c.parse(data); err != nil {
 		return nil, fmt.Errorf("devmgr: parse %s: %w", path, err)
 	}
+	c.resolveDirs(filepath.Dir(path))
 	return c, nil
 }
 

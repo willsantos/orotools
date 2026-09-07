@@ -94,46 +94,23 @@ func cleanPathArg(p string) (string, error) {
 	return filepath.Clean(p), nil
 }
 
-// loadDev loads the config, resolving path via flags/env.
+// loadDev loads the config, resolving path via flags/env. Pid/log dirs come
+// anchored by devmgr.Load — independent of the invocation CWD (FR-1).
 func loadDev(cmd *cobra.Command) (*devmgr.Config, error) {
 	p, err := resolveDevPath(cmd)
 	if err != nil {
 		return nil, err
 	}
-	cfg, err := devmgr.Load(p)
-	if err != nil {
-		return nil, err
-	}
-	// Resolve relative log/pid dirs against config base dir.
-	if cfg.Settings.PidDir == "" && cfg.Settings.LogDir == "" {
-		dir := filepath.Dir(p)
-		cfg.Settings.PidDir = filepath.Join(dir, ".dev-pids")
-		cfg.Settings.LogDir = filepath.Join(dir, ".dev-logs")
-	}
-	return cfg, nil
+	return devmgr.Load(p)
 }
 
-func devPidDir(cfg *devmgr.Config) string { return cfg.Settings.PidDir }
-func devLogDir(cfg *devmgr.Config) string { return cfg.Settings.LogDir }
+func devPidDir(cfg *devmgr.Config) string { return cfg.PidDir() }
+func devLogDir(cfg *devmgr.Config) string { return cfg.LogDir() }
 
-// devKeyValid rejeita atalhos que poderiam escapar do diretório de logs/pids
-// via path traversal.
-func devKeyValid(key string) bool {
-	return key != "" && key != "." && key != ".." &&
-		!strings.ContainsAny(key, `/\`) && !strings.ContainsRune(key, '\x00')
-}
-
+// devLogPath devolve o caminho do log delegando a validação de atalho ao
+// pacote que de fato escreve/lê os arquivos (FR-8).
 func devLogPath(cfg *devmgr.Config, key string) (string, error) {
-	if !devKeyValid(key) {
-		return "", fmt.Errorf("atalho inválido para arquivo de log: %q", key)
-	}
-	joined := filepath.Join(cfg.Settings.LogDir, key+".log")
-	// contenção explícita: o caminho final precisa permanecer dentro de LogDir
-	rel, err := filepath.Rel(cfg.Settings.LogDir, joined)
-	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		return "", fmt.Errorf("caminho de log escapa do diretório de logs: %q", joined)
-	}
-	return joined, nil
+	return devmgr.LogFile(cfg.LogDir(), key)
 }
 
 // ---------------------------------------------------------------------------
@@ -159,15 +136,18 @@ func newDevListCmd() *cobra.Command {
 	}
 }
 
-// projectMarker reports running/port-warn status glyph.
-func projectMarker(cfg *devmgr.Config, p *devmgr.Project, key string) string {
-	if devmgr.IsRunning(devPidDir(cfg), key) {
-		return "▶"
+// projectMarker reports the status glyph and the managed pid (FR-3):
+// pid > 0 identifies a process started and tracked by oro; an occupied port
+// without a pid means the occupant is external (FR-4).
+func projectMarker(cfg *devmgr.Config, p *devmgr.Project, key string) (string, int) {
+	st := devmgr.CheckProcess(cfg, key)
+	if st.Running {
+		return "▶", st.PID
 	}
 	if p.Port != nil && devmgr.PortInUse(*p.Port) {
-		return "!"
+		return "!", 0
 	}
-	return "○"
+	return "○", 0
 }
 
 // asciiMarker degrada o glifo de status para writers não-TTY.
@@ -187,7 +167,7 @@ func writeDevTable(w io.Writer, cfg *devmgr.Config, base string) {
 	tty := ui.IsTTY(w)
 
 	type row struct {
-		key, name, pm, port, marker string
+		key, name, pm, port, marker, pid string
 	}
 	var rows []row
 	var markers []string
@@ -197,18 +177,22 @@ func writeDevTable(w io.Writer, cfg *devmgr.Config, base string) {
 		if p.Port != nil {
 			port = strconv.Itoa(*p.Port)
 		}
-		m := projectMarker(cfg, p, k)
+		m, pid := projectMarker(cfg, p, k)
 		if !tty {
 			m = asciiMarker(m)
 		}
-		rows = append(rows, row{k, p.Name, p.PackageManager, port, m})
+		pidCell := "—"
+		if pid > 0 {
+			pidCell = strconv.Itoa(pid)
+		}
+		rows = append(rows, row{k, p.Name, p.PackageManager, port, m, pidCell})
 		markers = append(markers, m)
 	}
 
 	// lipgloss/table alinha as colunas por display width (ANSI-aware), o que
 	// mantém marcadores multibyte (▶/○) e ASCII (!) na mesma coluna.
 	t := table.New().
-		Headers("Status", "Atalho", "Nome", "PM", "Porta").
+		Headers("Status", "Atalho", "Nome", "PM", "Porta", "PID").
 		Border(lipgloss.NormalBorder()).
 		BorderStyle(pal.Muted).
 		StyleFunc(func(r, c int) lipgloss.Style {
@@ -227,13 +211,13 @@ func writeDevTable(w io.Writer, cfg *devmgr.Config, base string) {
 				}
 			case 1:
 				return pal.Key.Padding(0, 1)
-			case 4:
+			case 4, 5:
 				return pal.Muted.Padding(0, 1)
 			}
 			return lipgloss.NewStyle().Padding(0, 1)
 		})
 	for _, r := range rows {
-		t.Row(r.marker, r.key, r.name, r.pm, r.port)
+		t.Row(r.marker, r.key, r.name, r.pm, r.port, r.pid)
 	}
 
 	run, warn, stop := "▶", "!", "○"
@@ -266,27 +250,45 @@ func newDevStatusCmd() *cobra.Command {
 			status.Title("Projetos rodando")
 			fmt.Fprintln(cmd.OutOrStdout())
 			found := false
+			external := false
 			for _, k := range cfg.Keys() {
-				if !devmgr.IsRunning(devPidDir(cfg), k) {
+				st := devmgr.CheckProcess(cfg, k) // também coleta pid file stale (FR-5)
+				p, _ := cfg.Lookup(k)
+				if st.Running {
+					found = true
+					status.Success(fmt.Sprintf("%s (PID %d)", k, st.PID))
+					if p.Port != nil {
+						status.Info(fmt.Sprintf("  http://localhost:%d", *p.Port))
+					}
+					if logPath, err := devLogPath(cfg, k); err == nil {
+						status.Info(fmt.Sprintf("  log: %s", logPath))
+					}
 					continue
 				}
-				found = true
-				pid, _ := devmgr.ReadPid(devPidDir(cfg), k)
-				p, _ := cfg.Lookup(k)
-				status.Success(fmt.Sprintf("%s (PID %d)", k, pid))
-				if p.Port != nil {
-					status.Info(fmt.Sprintf("  http://localhost:%d", *p.Port))
-				}
-				if logPath, err := devLogPath(cfg, k); err == nil {
-					status.Info(fmt.Sprintf("  log: %s", logPath))
+				// FR-4: projeto parado com a porta configurada ocupada é
+				// ocupante externo — o oro não lembra de processo que não
+				// iniciou, mas não deixa a porta ocupada passar em silêncio.
+				if warnExternalOccupant(status, cfg, k) {
+					external = true
 				}
 			}
-			if !found {
+			if !found && !external {
 				status.Warn("nenhum projeto rodando; use 'oro dev start <atalho>'")
 			}
 			return nil
 		},
 	}
+}
+
+// warnExternalOccupant reports whether key's configured port is held by a
+// process oro does not manage, warning on the status output when it does.
+func warnExternalOccupant(status *ui.Status, cfg *devmgr.Config, key string) bool {
+	p, ok := cfg.Lookup(key)
+	if !ok || p.Port == nil || !devmgr.PortInUse(*p.Port) {
+		return false
+	}
+	status.Warn(fmt.Sprintf("%s: porta %d ocupada por processo externo — oro não gerencia", key, *p.Port))
+	return true
 }
 
 // ---------------------------------------------------------------------------
@@ -348,7 +350,7 @@ func runDevStart(cmd *cobra.Command, keys []string) error {
 	if wait > 0 {
 		starting := 0
 		for _, k := range keys {
-			if p, ok := cfg.Lookup(k); ok && !devmgr.IsRunning(devPidDir(cfg), k) && p.DevCommand != "" {
+			if p, ok := cfg.Lookup(k); ok && p.DevCommand != "" && !devmgr.CheckProcess(cfg, k).Running {
 				starting++
 			}
 		}
@@ -389,9 +391,8 @@ func runDevStart(cmd *cobra.Command, keys []string) error {
 				fail()
 				return
 			}
-			if devmgr.IsRunning(devPidDir(cfg), k) {
-				pid, _ := devmgr.ReadPid(devPidDir(cfg), k)
-				report(fmt.Sprintf("%s já está rodando (PID %d)", k, pid), reportOK)
+			if st := devmgr.CheckProcess(cfg, k); st.Running {
+				report(fmt.Sprintf("%s já está rodando (PID %d)", k, st.PID), reportOK)
 				return
 			}
 			if err := os.MkdirAll(devLogDir(cfg), 0o755); err != nil {
@@ -533,16 +534,18 @@ func runDevStop(cmd *cobra.Command, args []string) error {
 	}
 	stopped := 0
 	for _, k := range keys {
-		if !devmgr.IsRunning(devPidDir(cfg), k) {
+		switch st := devmgr.Stop(cfg, k); st {
+		case devmgr.Stopped:
+			stopped++
+			status.Success(fmt.Sprintf("%s parado", k))
+		case devmgr.StaleForeign:
+			status.Warn(fmt.Sprintf("%s: pid file apontava para processo alheio (coletado); nada foi sinalizado", k))
+		default: // NotRunning
+			if warnExternalOccupant(status, cfg, k) {
+				continue
+			}
 			status.Info(fmt.Sprintf("%s não está rodando", k))
-			continue
 		}
-		if err := devmgr.Stop(devPidDir(cfg), k); err != nil {
-			status.Error(fmt.Sprintf("%s: %v", k, err))
-			continue
-		}
-		stopped++
-		status.Success(fmt.Sprintf("%s parado", k))
 	}
 	if all && stopped == 0 {
 		status.Warn("nenhum projeto estava rodando")

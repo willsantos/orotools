@@ -173,11 +173,23 @@ func TestCheckStartPortsSkipsRunningProject(t *testing.T) {
 	}
 	defer l.Close()
 	pidDir := t.TempDir()
-	// our own pid keeps the project "running" while holding the port
+	// our own pid keeps the project "running" while holding the port; the
+	// project's work dir must match our real cwd for the FR-6 identity check
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := os.WriteFile(filepath.Join(pidDir, "a.pid"), []byte(strconv.Itoa(os.Getpid())+"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	cfg := devPortCfg(true, pidDir, map[string]int{"a": portOf(l)})
+	port := portOf(l)
+	cfg := &Config{}
+	cfg.Settings.EnforceUniquePorts = true
+	cfg.Settings.PidDir = pidDir
+	cfg.Add("a", &Project{
+		Name: "a", Path: wd, Cwd: wd,
+		PackageManager: "npm", DevCommand: "npm run dev", Port: &port,
+	})
 	if err := CheckStartPorts(cfg, []string{"a"}); err != nil {
 		t.Fatalf("running project must be skipped: %v", err)
 	}
