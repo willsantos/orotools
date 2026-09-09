@@ -527,3 +527,305 @@ func TestRunSkillsUpdateEmptyCatalogNoResults(t *testing.T) {
 		t.Errorf("output missing empty message: %s", out)
 	}
 }
+
+func TestRunSkillsOutsideProjectHasActionableError(t *testing.T) {
+	var out, errOut bytes.Buffer
+	tty := true
+	// Explicit --manifest pointing to a missing file keeps the actionable
+	// error (the user asked for that exact file).
+	opts := skillsOptions{
+		manifestPath:     filepath.Join(t.TempDir(), "orotools.yaml"),
+		manifestExplicit: true,
+		out:              &out,
+		errOut:           &errOut,
+		stdin:            bytes.NewReader(nil),
+		stdinTTY:         &tty,
+	}
+	err := runSkills(opts)
+	if err == nil {
+		t.Fatal("expected failure for explicit missing manifest")
+	}
+	for _, want := range []string{"nenhum projeto Oro encontrado", "--manifest"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q lacks %q", err, want)
+		}
+	}
+	err = runSkillsUpdate(skillsUpdateOptions{manifestPath: opts.manifestPath, manifestExplicit: true, out: &out, errOut: &errOut})
+	if err == nil || !strings.Contains(err.Error(), "nenhum projeto Oro encontrado") {
+		t.Errorf("update error = %v, want actionable message", err)
+	}
+}
+
+// --- modo ad-hoc (sem orotools.yaml) ---
+
+func TestRunSkillsAdHocDetectsAgentDir(t *testing.T) {
+	base := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(base, ".claude", "skills"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	remote := []skill.Candidate{wizardCandidate(t, "github:willsantos/skills_AI/local-pr-review", "local-pr-review", "github", "willsantos/skills_AI", "1.0.0")}
+	sel := &fakeSelector{ids: []string{remote[0].ID}}
+	var out, errOut bytes.Buffer
+	tty := true
+	err := runSkills(skillsOptions{
+		manifestPath: filepath.Join(base, "orotools.yaml"),
+		out:          &out,
+		errOut:       &errOut,
+		stdin:        bytes.NewReader(nil),
+		stdinTTY:     &tty,
+		selector:     sel,
+		loadGitHub:   fakeLoadGitHub(remote, nil),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), "agent detectado por .claude/skills") {
+		t.Errorf("output missing detection note: %s", out.String())
+	}
+	if _, err := os.Stat(filepath.Join(base, ".claude", "skills", "local-pr-review", "SKILL.md")); err != nil {
+		t.Errorf("skill not installed in the detected agent dir: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(base, "orotools.yaml")); !os.IsNotExist(err) {
+		t.Error("ad-hoc run created an orotools.yaml")
+	}
+	lock, err := skill.ReadLock(filepath.Join(base, ".orotools", "skills.lock.yaml"))
+	if err != nil {
+		t.Fatalf("lock not created in ad-hoc mode: %v", err)
+	}
+	if len(lock.Skills) != 1 {
+		t.Errorf("lock = %+v", lock.Skills)
+	}
+}
+
+func TestRunSkillsAdHocNoDirDefaultsOpencode(t *testing.T) {
+	base := t.TempDir()
+	remote := []skill.Candidate{wizardCandidate(t, "github:willsantos/skills_AI/local-pr-review", "local-pr-review", "github", "willsantos/skills_AI", "1.0.0")}
+	sel := &fakeSelector{ids: []string{remote[0].ID}}
+	var out, errOut bytes.Buffer
+	tty := true
+	err := runSkills(skillsOptions{
+		manifestPath: filepath.Join(base, "orotools.yaml"),
+		out:          &out,
+		errOut:       &errOut,
+		stdin:        bytes.NewReader(nil),
+		stdinTTY:     &tty,
+		selector:     sel,
+		loadGitHub:   fakeLoadGitHub(remote, nil),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), "usando .opencode/skills") {
+		t.Errorf("output missing default note: %s", out.String())
+	}
+	if _, err := os.Stat(filepath.Join(base, ".opencode", "skills", "local-pr-review", "SKILL.md")); err != nil {
+		t.Errorf("skill not installed in the default agent dir: %v", err)
+	}
+}
+
+func TestRunSkillsAdHocMultipleDirsAskOrError(t *testing.T) {
+	base := t.TempDir()
+	for _, dir := range []string{".cursor/skills", ".codex/skills"} {
+		if err := os.MkdirAll(filepath.Join(base, dir), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	remote := []skill.Candidate{wizardCandidate(t, "github:willsantos/skills_AI/local-pr-review", "local-pr-review", "github", "willsantos/skills_AI", "1.0.0")}
+	sel := &fakeSelector{ids: []string{remote[0].ID}}
+	var out, errOut bytes.Buffer
+	tty := true
+	picked := ""
+	err := runSkills(skillsOptions{
+		manifestPath: filepath.Join(base, "orotools.yaml"),
+		out:          &out,
+		errOut:       &errOut,
+		stdin:        bytes.NewReader(nil),
+		stdinTTY:     &tty,
+		selector:     sel,
+		loadGitHub:   fakeLoadGitHub(remote, nil),
+		pickAgent: func(candidates []string) (string, error) {
+			picked = strings.Join(candidates, ",")
+			return "codex", nil
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if picked != "cursor,codex" {
+		t.Errorf("pickAgent candidates = %q", picked)
+	}
+	if _, err := os.Stat(filepath.Join(base, ".codex", "skills", "local-pr-review", "SKILL.md")); err != nil {
+		t.Errorf("skill not installed in the chosen agent dir: %v", err)
+	}
+
+	// Without a picker, ambiguity is an actionable error.
+	err = runSkills(skillsOptions{
+		manifestPath: filepath.Join(base, "orotools.yaml"),
+		out:          &out,
+		errOut:       &errOut,
+		stdin:        bytes.NewReader(nil),
+		stdinTTY:     &tty,
+		selector:     sel,
+		loadGitHub:   fakeLoadGitHub(remote, nil),
+	})
+	if err == nil || !strings.Contains(err.Error(), "--agent") {
+		t.Errorf("err = %v, want ambiguity error hinting --agent", err)
+	}
+}
+
+func TestRunSkillsAdHocAgentFlag(t *testing.T) {
+	base := t.TempDir()
+	remote := []skill.Candidate{wizardCandidate(t, "github:willsantos/skills_AI/local-pr-review", "local-pr-review", "github", "willsantos/skills_AI", "1.0.0")}
+	sel := &fakeSelector{ids: []string{remote[0].ID}}
+	var out, errOut bytes.Buffer
+	tty := true
+	err := runSkills(skillsOptions{
+		manifestPath: filepath.Join(base, "orotools.yaml"),
+		agentFlag:    "copilot",
+		out:          &out,
+		errOut:       &errOut,
+		stdin:        bytes.NewReader(nil),
+		stdinTTY:     &tty,
+		selector:     sel,
+		loadGitHub:   fakeLoadGitHub(remote, nil),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(base, ".github", "skills", "local-pr-review", "SKILL.md")); err != nil {
+		t.Errorf("skill not installed in the --agent target: %v", err)
+	}
+
+	// Unknown agent id is rejected.
+	err = runSkills(skillsOptions{
+		manifestPath: filepath.Join(base, "orotools.yaml"),
+		agentFlag:    "windsurf",
+		out:          &out,
+		errOut:       &errOut,
+		stdin:        bytes.NewReader(nil),
+		stdinTTY:     &tty,
+		selector:     sel,
+		loadGitHub:   fakeLoadGitHub(remote, nil),
+	})
+	if err == nil || !strings.Contains(err.Error(), "--agent inválido") {
+		t.Errorf("err = %v, want unknown agent error", err)
+	}
+}
+
+func TestRunSkillsManifestWithAgentFlagRejected(t *testing.T) {
+	svc, _ := skillsProject(t)
+	var out, errOut bytes.Buffer
+	tty := true
+	err := runSkills(skillsOptions{
+		manifestPath: svc.ManifestPath,
+		agentFlag:    "codex",
+		out:          &out,
+		errOut:       &errOut,
+		stdin:        bytes.NewReader(nil),
+		stdinTTY:     &tty,
+	})
+	if err == nil || !strings.Contains(err.Error(), "--agent só pode ser usado sem orotools.yaml") {
+		t.Errorf("err = %v, want --agent rejection with manifest", err)
+	}
+}
+
+func TestRunSkillsUpdateAdHocDerivesAgentFromLock(t *testing.T) {
+	base := t.TempDir()
+	// Ad-hoc lock created by a previous wizard run in .claude/skills.
+	if err := os.MkdirAll(filepath.Join(base, ".claude", "skills", "local-pr-review"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(base, ".claude", "skills", "local-pr-review", "SKILL.md"), []byte("---\nname: local-pr-review\ndescription: old\nmetadata:\n  version: \"1.0.0\"\n---\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	lock := skill.NewLock()
+	lock.Upsert(skill.LockEntry{
+		ID: "github:willsantos/skills_AI/local-pr-review", Name: "local-pr-review",
+		Source: "github", SourceRef: "willsantos/skills_AI", Path: "local-pr-review",
+		Version: "1.0.0", Revision: "aaa", Target: ".claude/skills/local-pr-review",
+		ContentSHA256: mustDigestOf(t, filepath.Join(base, ".claude", "skills", "local-pr-review")),
+	})
+	if err := lock.Save(filepath.Join(base, ".orotools", "skills.lock.yaml")); err != nil {
+		t.Fatal(err)
+	}
+
+	updated := wizardCandidate(t, "github:willsantos/skills_AI/local-pr-review", "local-pr-review", "github", "willsantos/skills_AI", "1.1.0")
+	out, err := runUpdateFixtureAt(t, base, nil, []skill.Candidate{updated}, nil, false, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "1.0.0 → 1.1.0") {
+		t.Errorf("report missing update line: %s", out)
+	}
+	lockOnDisk, err := skill.ReadLock(filepath.Join(base, ".orotools", "skills.lock.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	entry, _ := lockOnDisk.Lookup("github:willsantos/skills_AI/local-pr-review")
+	if entry.Version != "1.1.0" {
+		t.Errorf("ad-hoc update did not persist: %+v", entry)
+	}
+}
+
+func TestRunSkillsUpdateAdHocMixedAgentsError(t *testing.T) {
+	base := t.TempDir()
+	lock := skill.NewLock()
+	for target, id := range map[string]string{
+		".claude/skills/a": "github:willsantos/skills_AI/a",
+		".codex/skills/b":  "github:willsantos/skills_AI/b",
+	} {
+		lock.Upsert(skill.LockEntry{
+			ID: id, Name: filepath.Base(target), Source: "github", SourceRef: "willsantos/skills_AI",
+			Path: filepath.Base(target), Version: "1.0.0", Target: target, ContentSHA256: "sha256:00",
+		})
+	}
+	if err := lock.Save(filepath.Join(base, ".orotools", "skills.lock.yaml")); err != nil {
+		t.Fatal(err)
+	}
+	_, err := runUpdateFixtureAt(t, base, nil, nil, nil, false, false)
+	if err == nil || !strings.Contains(err.Error(), "múltiplos diretórios") {
+		t.Errorf("err = %v, want mixed-agents error", err)
+	}
+}
+
+// runUpdateFixtureAt runs the update flow rooted at an arbitrary base.
+func runUpdateFixtureAt(t *testing.T, base string, bundled []skill.Candidate, remote []skill.Candidate, remoteErr error, force, dryRun bool) (string, error) {
+	t.Helper()
+	var out, errOut bytes.Buffer
+	opts := skillsUpdateOptions{
+		manifestPath:  filepath.Join(base, "orotools.yaml"),
+		force:         force,
+		dryRun:        dryRun,
+		out:           &out,
+		errOut:        &errOut,
+		recipeCatalog: fakeCatalog{cands: bundled},
+		loadGitHub: func(context.Context) ([]skill.Candidate, []skill.Warning, func(), error) {
+			if remoteErr != nil {
+				return nil, nil, func() {}, remoteErr
+			}
+			return remote, nil, func() {}, nil
+		},
+	}
+	err := runSkillsUpdate(opts)
+	return out.String(), err
+}
+
+func fakeLoadGitHub(remote []skill.Candidate, remoteErr error) func(context.Context) ([]skill.Candidate, []skill.Warning, func(), error) {
+	return func(context.Context) ([]skill.Candidate, []skill.Warning, func(), error) {
+		if remoteErr != nil {
+			return nil, nil, func() {}, remoteErr
+		}
+		return remote, nil, func() {}, nil
+	}
+}
+
+// mustDigestOf digests an existing directory for fixtures.
+func mustDigestOf(t *testing.T, dir string) string {
+	t.Helper()
+	parent := filepath.Dir(dir)
+	d, err := skill.Digest(os.DirFS(parent), filepath.Base(dir))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return d
+}

@@ -145,7 +145,7 @@ func runDevList(cmd *cobra.Command, args []string) error {
 	if err := validateDevGroups(cfg, args); err != nil {
 		return err
 	}
-	writeDevTable(cmd.OutOrStdout(), cfg, filepath.Dir(configPath), args)
+	writeDevTable(cmd.OutOrStdout(), cfg, filepath.Dir(configPath), args, false)
 	return nil
 }
 
@@ -199,7 +199,10 @@ func asciiMarker(m string) string {
 	}
 }
 
-func writeDevTable(w io.Writer, cfg *devmgr.Config, base string, filter []string) {
+// writeDevTable renders the dev projects table. With onlyRunning, only
+// projects currently managed-running appear (post start/stop summary — the
+// same table as `oro dev list`, filtered).
+func writeDevTable(w io.Writer, cfg *devmgr.Config, base string, filter []string, onlyRunning bool) {
 	pal := ui.PaletteFor(w)
 	tty := ui.IsTTY(w)
 
@@ -230,6 +233,9 @@ func writeDevTable(w io.Writer, cfg *devmgr.Config, base string, filter []string
 			port = strconv.Itoa(*p.Port)
 		}
 		m, pid := projectMarker(cfg, p, k)
+		if onlyRunning && pid <= 0 {
+			continue
+		}
 		if !tty {
 			m = asciiMarker(m)
 		}
@@ -244,6 +250,9 @@ func writeDevTable(w io.Writer, cfg *devmgr.Config, base string, filter []string
 	// FR-8: no modo filtrado o título identifica os grupos na forma gravada
 	// (não os argumentos crus do usuário).
 	title := "Projetos disponíveis em: " + base
+	if onlyRunning {
+		title = "Projetos rodando em: " + base
+	}
 	if len(filterKeys) > 0 {
 		var matched []string
 		for _, g := range cfg.Groups() {
@@ -557,10 +566,36 @@ func runDevStart(cmd *cobra.Command, keys []string) error {
 			status.Info(d)
 		}
 	}
+	writeRunningDevTable(cmd, cfg)
 	if failed > 0 {
 		return fmt.Errorf("%d projeto(s) falharam ao iniciar", failed)
 	}
 	return nil
+}
+
+// writeRunningDevTable imprime, ao final de start/stop, a mesma tabela do
+// `oro dev list` restrita aos projetos que estão rodando (nada é impresso
+// quando não resta nenhum).
+func writeRunningDevTable(cmd *cobra.Command, cfg *devmgr.Config) {
+	configPath, err := resolveDevPath(cmd)
+	if err != nil {
+		return
+	}
+	out := cmd.OutOrStdout()
+	if !hasRunningProjects(cfg) {
+		return
+	}
+	fmt.Fprintln(out)
+	writeDevTable(out, cfg, filepath.Dir(configPath), nil, true)
+}
+
+func hasRunningProjects(cfg *devmgr.Config) bool {
+	for _, k := range cfg.Keys() {
+		if devmgr.CheckProcess(cfg, k).Running {
+			return true
+		}
+	}
+	return false
 }
 
 // lastLines returns up to n final non-empty lines of path, reading only the
@@ -653,6 +688,7 @@ func runDevStop(cmd *cobra.Command, args []string) error {
 	if all && stopped == 0 {
 		status.Warn("nenhum projeto estava rodando")
 	}
+	writeRunningDevTable(cmd, cfg)
 	return nil
 }
 

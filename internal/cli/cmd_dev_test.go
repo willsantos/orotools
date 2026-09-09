@@ -57,7 +57,7 @@ func TestDevTableRendersWithoutCrash(t *testing.T) {
 		t.Fatal(err)
 	}
 	var buf bytes.Buffer
-	writeDevTable(&buf, cfg, t.TempDir(), nil)
+	writeDevTable(&buf, cfg, t.TempDir(), nil, false)
 	out := buf.String()
 	if !strings.Contains(out, "Atalho") {
 		t.Fatalf("table missing header:\n%s", out)
@@ -83,7 +83,7 @@ func TestDevTableUniformLineWidth(t *testing.T) {
 		PackageManager: "npm", DevCommand: "npm run dev", Port: &port,
 	})
 	var buf bytes.Buffer
-	writeDevTable(&buf, cfg, t.TempDir(), nil)
+	writeDevTable(&buf, cfg, t.TempDir(), nil, false)
 	out := buf.String()
 
 	if strings.Contains(out, "\x1b[") {
@@ -183,7 +183,7 @@ func TestDevListShowsManagedPid(t *testing.T) {
 	})
 
 	var buf bytes.Buffer
-	writeDevTable(&buf, cfg, t.TempDir(), nil)
+	writeDevTable(&buf, cfg, t.TempDir(), nil, false)
 	out := buf.String()
 	if !strings.Contains(out, "PID") {
 		t.Fatalf("tabela sem coluna PID:\n%s", out)
@@ -525,7 +525,7 @@ func groupsListCfg() *devmgr.Config {
 // grupo e o titulo identifica o filtro na forma gravada (FR-6/FR-8).
 func TestDevListFiltersByGroup(t *testing.T) {
 	var buf bytes.Buffer
-	writeDevTable(&buf, groupsListCfg(), "/base", []string{"clientes"})
+	writeDevTable(&buf, groupsListCfg(), "/base", []string{"clientes"}, false)
 	out := buf.String()
 	if !strings.Contains(out, "web") {
 		t.Fatalf("filtro deveria exibir o projeto do grupo Clientes:\n%s", out)
@@ -542,7 +542,7 @@ func TestDevListFiltersByGroup(t *testing.T) {
 // "grupos:" com as formas gravadas, nao os argumentos crus (FR-6/FR-8).
 func TestDevListFiltersUnionOfGroups(t *testing.T) {
 	var buf bytes.Buffer
-	writeDevTable(&buf, groupsListCfg(), "/base", []string{"CLIENTES", "saas"})
+	writeDevTable(&buf, groupsListCfg(), "/base", []string{"CLIENTES", "saas"}, false)
 	out := buf.String()
 	if !strings.Contains(out, "web") || !strings.Contains(out, "SaaS App") {
 		t.Fatalf("uniao deveria exibir Clientes e SaaS:\n%s", out)
@@ -583,7 +583,7 @@ func TestValidateDevGroupsExplicitWhenNoGroups(t *testing.T) {
 func TestDevGroupColumnTruthTable(t *testing.T) {
 	render := func(cfg *devmgr.Config, filter []string) string {
 		var buf bytes.Buffer
-		writeDevTable(&buf, cfg, "/base", filter)
+		writeDevTable(&buf, cfg, "/base", filter, false)
 		return buf.String()
 	}
 
@@ -607,7 +607,7 @@ func TestDevGroupColumnTruthTable(t *testing.T) {
 
 	t.Run("grupos mistos: coluna com — nos sem-grupo", func(t *testing.T) {
 		var buf bytes.Buffer
-		writeDevTable(&buf, groupsListCfg(), "/base", nil)
+		writeDevTable(&buf, groupsListCfg(), "/base", nil, false)
 		out := buf.String()
 		if !strings.Contains(out, "Grupo") {
 			t.Fatalf("grupos mistos devem ter coluna Grupo:\n%s", out)
@@ -629,7 +629,7 @@ func TestDevGroupColumnTruthTable(t *testing.T) {
 
 	t.Run("filtro de grupo unico: sem coluna", func(t *testing.T) {
 		var buf bytes.Buffer
-		writeDevTable(&buf, groupsListCfg(), "/base", []string{"clientes"})
+		writeDevTable(&buf, groupsListCfg(), "/base", []string{"clientes"}, false)
 		out := buf.String()
 		if strings.Contains(out, "Grupo") {
 			t.Fatalf("filtro de grupo unico nao deve ter coluna (redundante):\n%s", out)
@@ -638,7 +638,7 @@ func TestDevGroupColumnTruthTable(t *testing.T) {
 
 	t.Run("uniao de grupos: com coluna", func(t *testing.T) {
 		var buf bytes.Buffer
-		writeDevTable(&buf, groupsListCfg(), "/base", []string{"clientes", "saas"})
+		writeDevTable(&buf, groupsListCfg(), "/base", []string{"clientes", "saas"}, false)
 		out := buf.String()
 		if !strings.Contains(out, "Grupo") {
 			t.Fatalf("uniao de 2 grupos deve ter coluna Grupo:\n%s", out)
@@ -660,7 +660,7 @@ func TestDevTableUniformLineWidthWithGroupColumn(t *testing.T) {
 		PackageManager: "npm", DevCommand: "npm run dev", Port: &port,
 	})
 	var buf bytes.Buffer
-	writeDevTable(&buf, cfg, t.TempDir(), nil)
+	writeDevTable(&buf, cfg, t.TempDir(), nil, false)
 	out := buf.String()
 	widths := map[int]bool{}
 	for _, ln := range strings.Split(strings.TrimRight(out, "\n"), "\n") {
@@ -681,12 +681,97 @@ func TestDevListMatchesAccentFilter(t *testing.T) {
 	cfg.Add("conf", &devmgr.Project{Name: "Conf", Path: "/c", DevCommand: "npm run dev", Group: "Configurações"})
 	cfg.Add("web", &devmgr.Project{Name: "Web", Path: "/w", DevCommand: "pnpm dev", Group: "Clientes"})
 	var buf bytes.Buffer
-	writeDevTable(&buf, cfg, "/base", []string{"configuracoes"})
+	writeDevTable(&buf, cfg, "/base", []string{"configuracoes"}, false)
 	out := buf.String()
 	if !strings.Contains(out, "conf") {
 		t.Fatalf("filtro acentuado deveria exibir o grupo Configurações:\n%s", out)
 	}
 	if strings.Contains(out, "web") || strings.Contains(out, "Grupo") {
 		t.Fatalf("filtro de grupo unico: so as linhas do grupo, sem coluna:\n%s", out)
+	}
+}
+
+// UI (pedido 2026-09-09): start/stop terminam com a tabela do `oro dev list`
+// restrita aos projetos que estão rodando.
+func TestRunDevStartShowsRunningTable(t *testing.T) {
+	configPath := devStartProjectsConfig(t, map[string]*devmgr.Project{
+		"web": {Name: "web", Path: "/", Cwd: "/", PackageManager: "npm", DevCommand: "sleep 60"},
+		"api": {Name: "api", Path: "/", Cwd: "/", PackageManager: "npm", DevCommand: "sleep 60"},
+	})
+	defer stopStartedProject(t, configPath, "web")
+	defer stopStartedProject(t, configPath, "api")
+
+	cmd := fakeDevCmd(configPath)
+	cmd.PersistentFlags().Set("no-wait", "true")
+	var buf bytes.Buffer
+	cmd.SetOut(&buf)
+	if err := runDevStart(cmd, []string{"web", "api"}); err != nil {
+		t.Fatalf("err inesperado: %v", err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "Projetos rodando em:") {
+		t.Fatalf("tabela de rodando ausente após start:\n%s", out)
+	}
+	table := out[strings.Index(out, "Projetos rodando em:"):]
+	for _, key := range []string{"web", "api"} {
+		if !strings.Contains(table, key) {
+			t.Errorf("tabela de rodando não mostra %q:\n%s", key, table)
+		}
+	}
+}
+
+// stopLeakedProject stops a test project best-effort: already-stopped is
+// fine (used when the test itself stops projects via runDevStop).
+func stopLeakedProject(t *testing.T, configPath, key string) {
+	t.Helper()
+	cfg, err := devmgr.Load(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	devmgr.Stop(cfg, key)
+}
+
+func TestRunDevStopShowsRemainingRunningTable(t *testing.T) {
+	configPath := devStartProjectsConfig(t, map[string]*devmgr.Project{
+		"web": {Name: "web", Path: "/", Cwd: "/", PackageManager: "npm", DevCommand: "sleep 60"},
+		"api": {Name: "api", Path: "/", Cwd: "/", PackageManager: "npm", DevCommand: "sleep 60"},
+	})
+	defer stopLeakedProject(t, configPath, "web")
+	defer stopLeakedProject(t, configPath, "api")
+
+	start := fakeDevCmd(configPath)
+	start.PersistentFlags().Set("no-wait", "true")
+	if err := runDevStart(start, []string{"web", "api"}); err != nil {
+		t.Fatal(err)
+	}
+
+	stop := fakeDevCmd(configPath)
+	var buf bytes.Buffer
+	stop.SetOut(&buf)
+	if err := runDevStop(stop, []string{"web"}); err != nil {
+		t.Fatal(err)
+	}
+	out := buf.String()
+	idx := strings.Index(out, "Projetos rodando em:")
+	if idx < 0 {
+		t.Fatalf("tabela de rodando ausente após stop:\n%s", out)
+	}
+	table := out[idx:]
+	if !strings.Contains(table, "api") {
+		t.Errorf("tabela não mostra o projeto restante (api):\n%s", table)
+	}
+	if strings.Contains(table, "web") {
+		t.Errorf("tabela mostra projeto parado (web):\n%s", table)
+	}
+
+	// Parando o último projeto, a tabela não aparece.
+	stop2 := fakeDevCmd(configPath)
+	var buf2 bytes.Buffer
+	stop2.SetOut(&buf2)
+	if err := runDevStop(stop2, []string{"api"}); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(buf2.String(), "Projetos rodando em:") {
+		t.Fatalf("tabela impressa sem projetos rodando:\n%s", buf2.String())
 	}
 }

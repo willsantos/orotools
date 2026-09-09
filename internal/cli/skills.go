@@ -5,8 +5,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
+	"path"
 	"path/filepath"
+	"sort"
 
 	"github.com/charmbracelet/huh"
 	"golang.org/x/term"
@@ -21,10 +24,12 @@ import (
 // skillsOptions carries the wizard inputs and the injection points used by
 // tests (GitHub/filesystem/terminal are injectable — NFR-2).
 type skillsOptions struct {
-	manifestPath string
-	out          io.Writer
-	errOut       io.Writer
-	stdin        io.Reader
+	manifestPath     string
+	manifestExplicit bool
+	agentFlag        string
+	out              io.Writer
+	errOut           io.Writer
+	stdin            io.Reader
 
 	// recipeCatalog overrides the bundled catalog built from the manifest
 	// recipe. loadGitHub overrides the remote catalog loader; it returns a
@@ -33,8 +38,9 @@ type skillsOptions struct {
 	loadGitHub    func(context.Context) ([]skill.Candidate, []skill.Warning, func(), error)
 	// selector overrides the interactive multi-select. stdinTTY decides the
 	// interactivity check; nil defers to TTY detection on stdin.
-	selector skillSelector
-	stdinTTY *bool
+	selector  skillSelector
+	stdinTTY  *bool
+	pickAgent func(candidates []string) (string, error)
 }
 
 // skillOption is one selectable entry of the wizard.
@@ -50,50 +56,187 @@ type skillSelector interface {
 }
 
 // skillsContext bundles the resolved project state shared by `oro skills` and
-// `oro skills update`. Loading it performs no mutation.
+// `oro skills update`. Loading it performs no mutation. In ad-hoc mode (no
+// orotools.yaml) the manifest is nil and only the GitHub catalog applies.
 type skillsContext struct {
-	svc  skill.Service
-	m    *manifest.Manifest
-	lock *skill.Lock
+	svc       skill.Service
+	m         *manifest.Manifest // nil em modo ad-hoc
+	lock      *skill.Lock
+	adHoc     bool
+	agentNote string // info sobre a escolha de agent, exibida pelo chamador
 }
 
-func loadSkillsContext(manifestPath string) (skillsContext, error) {
-	manifestAbs, err := filepath.Abs(manifestPath)
+// contextOptions parametrizes the context resolution for the two skills
+// commands: the wizard is interactive (may ask the agent), update is not.
+type contextOptions struct {
+	manifestPath     string
+	manifestExplicit bool // --manifest passado explicitamente
+	agentFlag        string
+	interactive      bool
+	pickAgent        func(candidates []string) (string, error)
+}
+
+func loadSkillsContext(o contextOptions) (skillsContext, error) {
+	manifestAbs, err := filepath.Abs(o.manifestPath)
 	if err != nil {
 		return skillsContext{}, fmt.Errorf("resolver manifest: %w", err)
 	}
 	m, err := manifest.Read(manifestAbs)
+	switch {
+	case err == nil:
+		if o.agentFlag != "" {
+			return skillsContext{}, fmt.Errorf("--agent só pode ser usado sem orotools.yaml (o agent vem de ai.agent)")
+		}
+		base := filepath.Dir(manifestAbs)
+		svc := skill.Service{
+			Base:         base,
+			Agent:        skill.AgentFromManifest(m),
+			ManifestPath: manifestAbs,
+			LockPath:     filepath.Join(base, skill.LockDir, skill.LockFilename),
+		}
+		lock, err := readLockOrEmpty(svc.LockPath)
+		if err != nil {
+			return skillsContext{}, err
+		}
+		return skillsContext{svc: svc, m: m, lock: lock}, nil
+	case errors.Is(err, fs.ErrNotExist) && !o.manifestExplicit:
+		// Ad-hoc mode (emenda FR-2/decisão 12): operate without a manifest,
+		// locating the agent skills directories directly.
+		return loadAdHocContext(manifestAbs, o)
+	default:
+		if errors.Is(err, fs.ErrNotExist) {
+			return skillsContext{}, fmt.Errorf("nenhum projeto Oro encontrado: %s não existe — execute dentro de um projeto (ou aponte --manifest para o orotools.yaml dele)", manifestAbs)
+		}
+		return skillsContext{}, err
+	}
+}
+
+func readLockOrEmpty(path string) (*skill.Lock, error) {
+	lock, err := skill.ReadLock(path)
+	if errors.Is(err, skill.ErrLockNotFound) {
+		return skill.NewLock(), nil
+	}
+	return lock, err
+}
+
+// loadAdHocContext resolves the agent without a manifest: --agent wins, then
+// the update flow derives it from the lock targets, then the wizard detects
+// existing skills directories (asking when ambiguous), defaulting to
+// opencode when none exists.
+func loadAdHocContext(manifestAbs string, o contextOptions) (skillsContext, error) {
+	base := filepath.Dir(manifestAbs)
+	lock, err := readLockOrEmpty(filepath.Join(base, skill.LockDir, skill.LockFilename))
 	if err != nil {
 		return skillsContext{}, err
 	}
-	base := filepath.Dir(manifestAbs)
-	svc := skill.Service{
-		Base:         base,
-		Agent:        skill.AgentFromManifest(m),
-		ManifestPath: manifestAbs,
-		LockPath:     filepath.Join(base, skill.LockDir, skill.LockFilename),
+	ctx := skillsContext{
+		m:     nil,
+		lock:  lock,
+		adHoc: true,
+		svc: skill.Service{
+			Base:         base,
+			ManifestPath: manifestAbs,
+			LockPath:     filepath.Join(base, skill.LockDir, skill.LockFilename),
+		},
 	}
-	lock, err := skill.ReadLock(svc.LockPath)
-	if errors.Is(err, skill.ErrLockNotFound) {
-		lock = skill.NewLock()
-	} else if err != nil {
-		return skillsContext{}, err
+	switch {
+	case o.agentFlag != "":
+		if _, err := skill.SkillsDir(o.agentFlag); err != nil {
+			return skillsContext{}, fmt.Errorf("--agent inválido: %w", err)
+		}
+		ctx.svc.Agent = o.agentFlag
+		return ctx, nil
+	case !o.interactive:
+		if len(lock.Skills) > 0 {
+			agent, err := agentFromLock(lock)
+			if err != nil {
+				return skillsContext{}, err
+			}
+			ctx.svc.Agent = agent
+			return ctx, nil
+		}
+		ctx.svc.Agent = "opencode"
+		return ctx, nil
+	default:
+		var found []string
+		for _, agent := range []string{"opencode", "cursor", "claude-code", "codex", "copilot"} {
+			dir, err := skill.SkillsDir(agent)
+			if err == nil && dirExists(filepath.Join(base, dir)) {
+				found = append(found, agent)
+			}
+		}
+		switch len(found) {
+		case 1:
+			ctx.svc.Agent = found[0]
+			dir, _ := skill.SkillsDir(found[0])
+			ctx.agentNote = fmt.Sprintf("sem orotools.yaml: agent detectado por %s (use --agent para escolher outro)", dir)
+		case 0:
+			ctx.svc.Agent = "opencode"
+			ctx.agentNote = "sem orotools.yaml: nenhum diretório de skills encontrado; usando .opencode/skills (use --agent para escolher outro)"
+		default:
+			if o.pickAgent == nil {
+				return skillsContext{}, fmt.Errorf("múltiplos diretórios de skills encontrados (%v); use --agent para escolher", found)
+			}
+			chosen, err := o.pickAgent(found)
+			if err != nil {
+				return skillsContext{}, fmt.Errorf("escolha de agent cancelada")
+			}
+			ctx.svc.Agent = chosen
+		}
+		return ctx, nil
 	}
-	return skillsContext{svc: svc, m: m, lock: lock}, nil
+}
+
+// agentFromLock reverse-looks the agent from the lock targets; mixed targets
+// need an explicit --agent without a manifest.
+func agentFromLock(lock *skill.Lock) (string, error) {
+	dirs := make(map[string]bool)
+	for _, e := range lock.Skills {
+		dirs[path.Dir(e.Target)] = true
+	}
+	if len(dirs) > 1 {
+		list := make([]string, 0, len(dirs))
+		for d := range dirs {
+			list = append(list, d)
+		}
+		sort.Strings(list)
+		return "", fmt.Errorf("lock contém skills em múltiplos diretórios (%v); sem orotools.yaml, use --agent", list)
+	}
+	for dir := range dirs {
+		for _, agent := range []string{"opencode", "cursor", "claude-code", "codex", "copilot"} {
+			if d, _ := skill.SkillsDir(agent); d == dir {
+				return agent, nil
+			}
+		}
+	}
+	return "", fmt.Errorf("não foi possível identificar o agent pelos targets do lock; use --agent")
 }
 
 // runSkills implements `oro skills`: shows installed skills, migrates legacy
 // bundled skills into the lock and interactively installs the selection
-// (skills-manager FR-1, FR-11, FR-15, FR-16).
+// (skills-manager FR-1, FR-11, FR-15, FR-16). Without an orotools.yaml it
+// runs in ad-hoc mode: GitHub catalog only, agent detected or chosen.
 func runSkills(opts skillsOptions) error {
 	out := opts.out
 	status := ui.NewStatus(out)
 
-	ctx, err := loadSkillsContext(opts.manifestPath)
+	ctx, err := loadSkillsContext(contextOptions{
+		manifestPath:     opts.manifestPath,
+		manifestExplicit: opts.manifestExplicit,
+		agentFlag:        opts.agentFlag,
+		interactive:      true,
+		pickAgent:        opts.pickAgent,
+	})
 	if err != nil {
 		return fmt.Errorf("skills: %w", err)
 	}
 	svc, lock := ctx.svc, ctx.lock
+	if ctx.agentNote != "" {
+		status.Info(ctx.agentNote)
+	}
+	if ctx.adHoc {
+		status.Info("sem orotools.yaml: catálogo bundled indisponível (apenas skills_AI); o lock fica em .orotools/ mesmo assim")
+	}
 
 	// The wizard is interactive by nature (FR-4); the non-interactive path is
 	// `oro skills update`. Checked before any mutation.
@@ -102,10 +245,14 @@ func runSkills(opts skillsOptions) error {
 	}
 	svc.CleanOrphans()
 
-	// Bundled catalog: errors are fatal packaging problems (FR-7).
-	bundled, err := loadBundledCatalog(opts, ctx.m)
-	if err != nil {
-		return fmt.Errorf("skills: %w", err)
+	// Bundled catalog only exists with a manifest; errors are fatal packaging
+	// problems (FR-7).
+	var bundled []skill.Candidate
+	if !ctx.adHoc {
+		bundled, err = loadBundledCatalog(opts, ctx.m)
+		if err != nil {
+			return fmt.Errorf("skills: %w", err)
+		}
 	}
 
 	// Remote catalog: degradation to warning keeps bundled usable (FR-10).
@@ -119,9 +266,12 @@ func runSkills(opts skillsOptions) error {
 
 	// Lazy migration of legacy bundled skills (FR-20): adopts intact targets
 	// into the lock before classifying what is installed vs available.
-	migration, err := svc.MigrateBundled(lock, bundled)
-	if err != nil {
-		return fmt.Errorf("skills: %w", err)
+	var migration []skill.MigrationResult
+	if !ctx.adHoc {
+		migration, err = svc.MigrateBundled(lock, bundled)
+		if err != nil {
+			return fmt.Errorf("skills: %w", err)
+		}
 	}
 
 	candidates := append(append([]skill.Candidate(nil), bundled...), remote...)
@@ -279,11 +429,13 @@ func listMarker(out io.Writer) rune {
 // skillsUpdateOptions carries the `oro skills update` inputs and test
 // injection points.
 type skillsUpdateOptions struct {
-	manifestPath string
-	force        bool
-	dryRun       bool
-	out          io.Writer
-	errOut       io.Writer
+	manifestPath     string
+	manifestExplicit bool
+	agentFlag        string
+	force            bool
+	dryRun           bool
+	out              io.Writer
+	errOut           io.Writer
 
 	recipeCatalog skill.CatalogProvider
 	loadGitHub    func(context.Context) ([]skill.Candidate, []skill.Warning, func(), error)
@@ -292,21 +444,34 @@ type skillsUpdateOptions struct {
 // runSkillsUpdate implements `oro skills update`: compares every lock entry
 // with the catalogs and applies updates best-effort, with a deterministic
 // report and an aggregated exit code (skills-manager FR-1, FR-27, FR-28).
+// Without an orotools.yaml it updates only GitHub-managed entries.
 func runSkillsUpdate(opts skillsUpdateOptions) error {
 	out := opts.out
 	status := ui.NewStatus(out)
 
-	ctx, err := loadSkillsContext(opts.manifestPath)
+	ctx, err := loadSkillsContext(contextOptions{
+		manifestPath:     opts.manifestPath,
+		manifestExplicit: opts.manifestExplicit,
+		agentFlag:        opts.agentFlag,
+		interactive:      false,
+	})
 	if err != nil {
 		return fmt.Errorf("skills update: %w", err)
 	}
 	svc, lock := ctx.svc, ctx.lock
+	if ctx.agentNote != "" {
+		status.Info(ctx.agentNote)
+	}
 	svc.CleanOrphans()
 
-	// Bundled catalog: fatal on packaging problems (FR-7).
-	bundled, err := loadBundledCatalog(skillsOptions{recipeCatalog: opts.recipeCatalog}, ctx.m)
-	if err != nil {
-		return fmt.Errorf("skills update: %w", err)
+	// Bundled catalog: fatal on packaging problems (FR-7). Ad-hoc mode has no
+	// recipe to resolve, so bundled entries in the lock fail per-item.
+	bundled := []skill.Candidate(nil)
+	if !ctx.adHoc {
+		bundled, err = loadBundledCatalog(skillsOptions{recipeCatalog: opts.recipeCatalog}, ctx.m)
+		if err != nil {
+			return fmt.Errorf("skills update: %w", err)
+		}
 	}
 
 	// Remote failure degrades: bundled entries still processed, managed ones
@@ -321,9 +486,12 @@ func runSkillsUpdate(opts skillsUpdateOptions) error {
 		status.Warn(fmt.Sprintf("%s ignorada: %s", w.SkillID, w.Message))
 	}
 
-	migration, err := svc.MigrateBundled(lock, bundled)
-	if err != nil {
-		return fmt.Errorf("skills update: %w", err)
+	migration := []skill.MigrationResult(nil)
+	if !ctx.adHoc {
+		migration, err = svc.MigrateBundled(lock, bundled)
+		if err != nil {
+			return fmt.Errorf("skills update: %w", err)
+		}
 	}
 
 	report, err := svc.Update(ctx.m, lock, skill.UpdateInput{
@@ -419,4 +587,10 @@ func (huhSkillSelector) Select(title string, options []skillOption) ([]string, e
 
 func sourceLabel(source, sourceRef string) string {
 	return source + ":" + sourceRef
+}
+
+// dirExists reports whether the directory exists in the filesystem.
+func dirExists(p string) bool {
+	info, err := os.Stat(p)
+	return err == nil && info.IsDir()
 }
