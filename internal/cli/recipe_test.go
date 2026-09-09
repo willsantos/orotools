@@ -25,11 +25,11 @@ func TestRunNew_StackDryRun(t *testing.T) {
 
 	var out bytes.Buffer
 	err := runNew(newOptions{
-		name:  "stack-app",
-		stack: "fastify-next",
-		yes:   true,
+		name:   "stack-app",
+		stack:  "fastify-next",
+		yes:    true,
 		dryRun: true,
-		out:   &out,
+		out:    &out,
 	})
 	if err != nil {
 		t.Fatalf("dry-run: %v", err)

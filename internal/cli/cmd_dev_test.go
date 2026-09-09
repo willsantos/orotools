@@ -203,7 +203,6 @@ func TestDevListShowsManagedPid(t *testing.T) {
 	}
 }
 
-
 func TestDevLogPathRejectsTraversal(t *testing.T) {
 	cfg := &devmgr.Config{}
 	cfg.Settings.LogDir = t.TempDir()
@@ -511,6 +510,7 @@ func TestRunDevStartBlocksDuplicatePortsInBatch(t *testing.T) {
 		t.Error("nenhum processo deveria ter sido iniciado")
 	}
 }
+
 // groupsListCfg monta um config com dois grupos e um projeto sem grupo,
 // na ordem de insercao: web=Clientes, saas=SaaS, misc=sem grupo.
 func groupsListCfg() *devmgr.Config {

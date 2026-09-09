@@ -89,6 +89,10 @@ func runApply(opts applyOptions) error {
 		status.Error("um ou mais passos falharam; o projeto pode estar parcialmente aplicado")
 		return fmt.Errorf("apply concluído com erros fatais")
 	}
+	// FR-21 (skills-manager): apply never updates installed skills.
+	if len(m.Skills.Bundled) > 0 || len(m.Skills.Managed) > 0 {
+		status.Info("skills não são atualizadas pelo apply; use `oro skills update`")
+	}
 	status.Success("apply concluído")
 	return nil
 }

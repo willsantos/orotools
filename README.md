@@ -74,10 +74,20 @@ oro doctor --stack rails
 | `oro info` | Mostra o estado do manifest do projeto |
 | `oro add [skill\|agent\|pipeline] [value]` | Registra entrada no manifest |
 | `oro recipe list` | Lista recipes oficiais embutidas |
+| `oro skills` | Instala skills da recipe e do catálogo `skills_AI` (wizard) |
+| `oro skills update` | Atualiza todas as skills gerenciadas (`--dry-run`/`--force`) |
 | `oro dev` | Gerencia dev servers de projetos (`list`/`status`/`start`/`stop`/`logs`/`open`/`add`) |
 | `oro upgrade` | Atualiza o `oro` para a última release |
 
 Use `oro [comando] --help` para flags e detalhes de cada comando.
+
+### Skills gerenciadas
+
+Skills instaladas ficam rastreáveis em `.orotools/skills.lock.yaml` (origem,
+versão, commit e digest). O wizard instala da recipe e do catálogo público
+`github:willsantos/skills_AI`; `oro skills update` atualiza tudo que está
+gerenciado, bloqueando skills com alterações locais salvo `--force`. Detalhes
+em [`docs/commands/skills.md`](./docs/commands/skills.md).
 
 ### Stacks oficiais
 

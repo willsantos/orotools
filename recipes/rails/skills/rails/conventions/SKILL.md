@@ -1,6 +1,8 @@
 ---
 name: rails-conventions
 description: Rails conventions
+metadata:
+  version: "1.0.0"
 ---
 # Rails
 

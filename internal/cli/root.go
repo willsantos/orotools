@@ -31,6 +31,7 @@ func newRoot(version string) *cobra.Command {
 	root.AddCommand(newAddCmd())
 	root.AddCommand(newRecipeCmd())
 	root.AddCommand(newDevCmd())
+	root.AddCommand(newSkillsCmd())
 	root.AddCommand(newUpgradeCmd(version))
 	return root
 }

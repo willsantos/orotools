@@ -8,6 +8,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"oroborus.dev/orotools/internal/manifest"
+	"oroborus.dev/orotools/internal/skill"
 )
 
 type fakeRepoRunner struct{}
@@ -52,14 +55,25 @@ steps:
 	}
 }
 
+// bundledSkillMD returns a SKILL.md body satisfying the versioned metadata
+// contract (skills-manager FR-7).
+func bundledSkillMD(name, description string) string {
+	return "---\nname: " + name + "\ndescription: " + description + "\nmetadata:\n  version: \"1.0.0\"\n---\n# " + name + "\n"
+}
+
 func writeBundledSkillFixture(t *testing.T, dir string) {
 	t.Helper()
-	skillDir := filepath.Join(dir, "skills", "base", "code-review")
-	if err := os.MkdirAll(skillDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte("# code review\n"), 0o644); err != nil {
-		t.Fatal(err)
+	for ref, name := range map[string]string{
+		"base/code-review": "code-review",
+		"base/formatting":  "formatting",
+	} {
+		skillDir := filepath.Join(dir, "skills", ref)
+		if err := os.MkdirAll(skillDir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte(bundledSkillMD(name, name+" guidelines")), 0o644); err != nil {
+			t.Fatal(err)
+		}
 	}
 }
 
@@ -262,7 +276,7 @@ func TestRunNew_BundledSkills(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	recipeWithSkills := string(b) + "\nskills:\n  bundled:\n    - base/code-review\n"
+	recipeWithSkills := string(b) + "\nskills:\n  bundled:\n    - base/code-review\n    - base/formatting\n"
 	if err := os.WriteFile(recipePath, []byte(recipeWithSkills), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -288,6 +302,77 @@ func TestRunNew_BundledSkills(t *testing.T) {
 	}
 	if strings.Contains(out.String(), "skills (fase 14)") {
 		t.Errorf("skills should no longer be skipped:\n%s", out.String())
+	}
+	// Both bundled skills registered in the lock (skills-manager T12).
+	lock, err := skill.ReadLock(filepath.Join(workDir, "skill-app", ".orotools", "skills.lock.yaml"))
+	if err != nil {
+		t.Fatalf("lock not created by oro new: %v", err)
+	}
+	if len(lock.Skills) != 2 {
+		t.Errorf("lock has %d entries, want 2: %+v", len(lock.Skills), lock.Skills)
+	}
+	// Scaffold manifest stays v1 (no managed refs in this flow).
+	m, err := manifest.Read(filepath.Join(workDir, "skill-app", manifest.Filename))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m.Version != 1 {
+		t.Errorf("scaffold manifest version = %d, want 1", m.Version)
+	}
+}
+
+func TestRunNew_BundledSkillsPartialFailure(t *testing.T) {
+	recipeDir := t.TempDir()
+	writeRecipeFixture(t, recipeDir)
+	writeBundledSkillFixture(t, recipeDir)
+	recipePath := filepath.Join(recipeDir, "recipe.yaml")
+	b, err := os.ReadFile(recipePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	recipeWithSkills := string(b) + "\nskills:\n  bundled:\n    - base/code-review\n    - base/formatting\n"
+	if err := os.WriteFile(recipePath, []byte(recipeWithSkills), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	workDir := t.TempDir()
+	restore := chdir(t, workDir)
+	defer restore()
+
+	// Pre-existing unmanaged destination for one skill: create-only conflict.
+	conflictDir := filepath.Join(workDir, "skill-app", ".opencode", "skills", "code-review")
+	if err := os.MkdirAll(conflictDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(conflictDir, "user.txt"), []byte("keep"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	var out bytes.Buffer
+	if err := runNew(newOptions{
+		name:       "skill-app",
+		recipePath: recipePath,
+		yes:        true,
+		ai:         "opencode",
+		out:        &out,
+		repoRunner: fakeRepoRunner{},
+	}); err != nil {
+		t.Fatalf("runNew: %v\n%s", err, out.String())
+	}
+	// Conflicted skill untouched, sibling installed, lock has only the sibling.
+	userFile, err := os.ReadFile(filepath.Join(conflictDir, "user.txt"))
+	if err != nil || string(userFile) != "keep" {
+		t.Errorf("conflicted destination touched: %q, %v", userFile, err)
+	}
+	if _, err := os.Stat(filepath.Join(workDir, "skill-app", ".opencode", "skills", "formatting", "SKILL.md")); err != nil {
+		t.Fatalf("sibling skill not installed: %v", err)
+	}
+	lock, err := skill.ReadLock(filepath.Join(workDir, "skill-app", ".orotools", "skills.lock.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(lock.Skills) != 1 || !strings.Contains(lock.Skills[0].ID, "formatting") {
+		t.Errorf("lock = %+v, want only formatting", lock.Skills)
 	}
 }
 

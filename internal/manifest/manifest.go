@@ -16,7 +16,8 @@ const Filename = "orotools.yaml"
 // Header is written as a comment at the top of every written manifest.
 const Header = "# orotools.yaml — desired state managed by Orotools. Edit with care."
 
-// Manifest models orotools.yaml v1 (spec section 26).
+// Manifest models orotools.yaml schema v2 (skills-manager FR-17); the parser
+// keeps accepting v1 manifests.
 type Manifest struct {
 	Version    int            `yaml:"version"`
 	Recipe     RecipeRef      `yaml:"recipe"`
@@ -50,10 +51,19 @@ type AIRef struct {
 	Agent string `yaml:"agent"`
 }
 
-// SkillsRef lists bundled and external skills for the project.
+// ManagedSkillRef identifies a remote skill chosen for the project (manifest
+// schema v2). The installed version is resolved state and belongs to the
+// skills lock, not to the desired-state manifest.
+type ManagedSkillRef struct {
+	Source string `yaml:"source"` // e.g. github:willsantos/skills_AI
+	Name   string `yaml:"name"`
+}
+
+// SkillsRef lists bundled, external and managed skills for the project.
 type SkillsRef struct {
-	Bundled  []string `yaml:"bundled"`
-	External []string `yaml:"external"`
+	Bundled  []string          `yaml:"bundled"`
+	External []string          `yaml:"external"`
+	Managed  []ManagedSkillRef `yaml:"managed,omitempty"`
 }
 
 // AgentsRef lists bundled and external agents for the project.
@@ -77,7 +87,8 @@ func Read(path string) (*Manifest, error) {
 	return Parse(src)
 }
 
-// Parse decodes src as a Manifest v1 using strict decoding.
+// Parse decodes src as a Manifest using strict decoding. Schema v1 and v2 are
+// accepted (skills-manager FR-17).
 func Parse(src []byte) (*Manifest, error) {
 	dec := yaml.NewDecoder(bytes.NewReader(src))
 	dec.KnownFields(true)
@@ -85,13 +96,46 @@ func Parse(src []byte) (*Manifest, error) {
 	if err := dec.Decode(&m); err != nil {
 		return nil, fmt.Errorf("parse manifest: %w", err)
 	}
-	if m.Version != 1 {
-		return nil, fmt.Errorf("manifest version: must be 1, got %d", m.Version)
+	if m.Version != 1 && m.Version != 2 {
+		return nil, fmt.Errorf("manifest version: must be 1 or 2, got %d", m.Version)
 	}
 	if m.Project.Name == "" {
 		return nil, errors.New("manifest: project.name is required")
 	}
+	if err := validateSkills(m.Skills); err != nil {
+		return nil, err
+	}
 	return &m, nil
+}
+
+func validateSkills(s SkillsRef) error {
+	seen := make(map[ManagedSkillRef]bool, len(s.Managed))
+	for _, ref := range s.Managed {
+		if ref.Source == "" || ref.Name == "" {
+			return fmt.Errorf("manifest: skills.managed entry needs source and name, got %+v", ref)
+		}
+		if seen[ref] {
+			return fmt.Errorf("manifest: skills.managed has duplicate entry %s/%s", ref.Source, ref.Name)
+		}
+		seen[ref] = true
+	}
+	return nil
+}
+
+// AddManagedSkill records a remote skill choice, deduping the (source, name)
+// pair and promoting the manifest to schema v2 — the promotion happens only
+// when a managed reference is persisted (skills-manager FR-15, FR-17).
+func (m *Manifest) AddManagedSkill(source, name string) {
+	ref := ManagedSkillRef{Source: source, Name: name}
+	for _, existing := range m.Skills.Managed {
+		if existing == ref {
+			return
+		}
+	}
+	m.Skills.Managed = append(m.Skills.Managed, ref)
+	if m.Version < 2 {
+		m.Version = 2
+	}
 }
 
 // Write serialises m to path with a leading comment header. It overwrites any

@@ -134,17 +134,33 @@ func runNew(opts newOptions) error {
 	recipeFS := src.FS
 
 	if len(r.Skills.Bundled) > 0 {
-		if err := skill.InstallBundled(skill.BundledOptions{
-			Base:     projectBase,
-			Agent:    agentName,
-			RecipeFS: recipeFS,
-			Bundled:  r.Skills.Bundled,
-			Stdout:   out,
-			Stderr:   opts.err,
-		}); err != nil {
-			status.Warn(fmt.Sprintf("skills bundled: %v", err))
+		// Managed installer (skills-manager FR-21/T12): transactional install
+		// with lock; only effectively installed skills are registered.
+		svc := skill.Service{
+			Base:         projectBase,
+			Agent:        agentName,
+			ManifestPath: filepath.Join(projectBase, manifest.Filename),
+			LockPath:     filepath.Join(projectBase, skill.LockDir, skill.LockFilename),
+		}
+		cands, _, catErr := skill.RecipeCatalog{RecipeName: r.Name, FS: recipeFS, Refs: r.Skills.Bundled}.List(context.Background())
+		if catErr != nil {
+			status.Warn(fmt.Sprintf("skills bundled: %v", catErr))
 		} else {
-			status.Success(fmt.Sprintf("skills bundled: %d instaladas", len(r.Skills.Bundled)))
+			lock := skill.NewLock()
+			installed, failed := 0, 0
+			for _, cand := range cands {
+				if _, err := svc.Install(nil, lock, cand); err != nil {
+					status.Warn(fmt.Sprintf("skill %s: %v", cand.Name, err))
+					failed++
+					continue
+				}
+				installed++
+			}
+			if failed > 0 {
+				status.Warn(fmt.Sprintf("skills bundled: %d instalada(s), %d falharam; rode `oro skills` no projeto para concluir", installed, failed))
+			} else {
+				status.Success(fmt.Sprintf("skills bundled: %d instaladas", installed))
+			}
 		}
 	}
 
