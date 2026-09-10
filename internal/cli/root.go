@@ -4,6 +4,11 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// activeVersion guarda a versão do binário para as UIs interativas (o picker
+// de skills mostra no cabeçalho). Fica vazia em testes que chamam runSkills
+// direto — o picker degrada para "dev".
+var activeVersion string
+
 // Run builds the root command and executes it with args.
 func Run(version string, args []string) error {
 	if shouldCheckForUpdate(version, args) {
@@ -17,6 +22,7 @@ func Run(version string, args []string) error {
 }
 
 func newRoot(version string) *cobra.Command {
+	activeVersion = version
 	root := &cobra.Command{
 		Use:   "oro",
 		Short: "Orotools — scaffold e padronização de projetos",

@@ -43,10 +43,17 @@ type skillsOptions struct {
 	pickAgent func(candidates []string) (string, error)
 }
 
-// skillOption is one selectable entry of the wizard.
+// skillOption is one selectable entry of the wizard. Beyond the legacy flat
+// Label (huh fallback), the metadata fields feed the full-screen picker:
+// grouping by origin, description line and detail panel.
 type skillOption struct {
-	ID    string
-	Label string
+	ID          string
+	Name        string
+	Label       string
+	Description string
+	Version     string
+	Source      string // recipe|github
+	SourceRef   string // recipe name or repo slug
 }
 
 // skillSelector asks the user to pick zero or more skills, returning the
@@ -301,8 +308,13 @@ func runSkills(opts skillsOptions) error {
 	options := make([]skillOption, 0, len(available))
 	for _, cand := range available {
 		options = append(options, skillOption{
-			ID:    cand.ID,
-			Label: fmt.Sprintf("%s %s %s — %s", cand.Name, cand.Version.String(), sourceLabel(string(cand.Source), cand.SourceRef), cand.Description),
+			ID:          cand.ID,
+			Name:        cand.Name,
+			Label:       fmt.Sprintf("%s %s %s — %s", cand.Name, cand.Version.String(), sourceLabel(string(cand.Source), cand.SourceRef), cand.Description),
+			Description: cand.Description,
+			Version:     cand.Version.String(),
+			Source:      string(cand.Source),
+			SourceRef:   cand.SourceRef,
 		})
 	}
 	selectedIDs, err := selectSkills(opts, "Selecione as skills para instalar", options)
@@ -553,7 +565,13 @@ func renderUpdateReport(out io.Writer, report skill.UpdateReport, dryRun bool) {
 func selectSkills(opts skillsOptions, title string, options []skillOption) ([]string, error) {
 	sel := opts.selector
 	if sel == nil {
-		sel = huhSkillSelector{}
+		// Produção usa a TUI full-screen; huh fica como fallback quando a
+		// saída não é um terminal (a TUI precisa de alt-screen).
+		if ui.IsTTY(opts.out) {
+			sel = tuiSkillSelector{version: activeVersion}
+		} else {
+			sel = huhSkillSelector{}
+		}
 	}
 	return sel.Select(title, options)
 }
