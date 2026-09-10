@@ -1,13 +1,13 @@
 {
   "projects": {
-    "beafaes": {
-      "name": "Bea Faes (Sistema)",
-      "path": "/home/willsantos/dev/clientes/beafaes",
-      "cwd": "/home/willsantos/dev/clientes/beafaes/apps/web",
+    "projeto-a": {
+      "name": "Projeto A (Sistema)",
+      "path": "/home/willsantos/dev/clientes/projeto-a",
+      "cwd": "/home/willsantos/dev/clientes/projeto-a/apps/web",
       "package_manager": "pnpm",
       "dev_command": "pnpm dev",
       "port": 3001,
-      "description": "Monorepo Next.js - Sistema Bea Faes"
+      "description": "Monorepo Next.js - Sistema Projeto A"
     },
     "contabil": {
       "name": "Contábil Santos",
@@ -90,14 +90,14 @@
       "port": 3006,
       "description": "Monorepo Turbo - Willy Wave (web)"
     },
-    "bigodi-p": {
-      "name": "Bigodinhos (Prospect)",
+    "projeto-b": {
+      "name": "Projeto B (Prospect)",
       "path": "/home/willsantos/dev/clientes/prospect",
-      "cwd": "/home/willsantos/dev/clientes/prospect/bigodinhos/app",
+      "cwd": "/home/willsantos/dev/clientes/prospect/projeto-b/app",
       "package_manager": "pnpm",
       "dev_command": "pnpm dev",
       "port": 5178,
-      "description": "Vite + React 19 - Proposta cliente Bigodinhos"
+      "description": "Vite + React 19 - Proposta cliente Projeto B"
     }
   },
   "settings": {

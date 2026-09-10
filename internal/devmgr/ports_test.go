@@ -83,7 +83,7 @@ func TestNextFreePortPicksLowestFree(t *testing.T) {
 }
 
 func TestNextFreePortSkipsAssignedProject(t *testing.T) {
-	assigned := map[int]string{3001: "beafaes"}
+	assigned := map[int]string{3001: "projeto-a"}
 	p, ok := NextFreePort(PortRange{3001, 3099}, assigned)
 	if !ok {
 		t.Fatal("no free port")

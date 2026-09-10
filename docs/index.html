@@ -173,24 +173,24 @@
   </p>
   <pre class="code">{
   "projects": {
-    "beafaes": {
-      "name": "Bea Faes (Sistema)",
-      "path": "/home/voce/dev/clientes/beafaes",
-      "cwd": "/home/voce/dev/clientes/beafaes/apps/web",
+    "projeto-a": {
+      "name": "Projeto A (Sistema)",
+      "path": "/home/voce/dev/clientes/projeto-a",
+      "cwd": "/home/voce/dev/clientes/projeto-a/apps/web",
       "package_manager": "pnpm",
       "dev_command": "pnpm dev",
       "port": 3001,
-      "description": "Monorepo Next.js - Sistema Bea Faes",
+      "description": "Monorepo Next.js - Sistema Projeto A",
       <span class="hl">"group": "Clientes"</span>
     },
-    "bigodi-p": {
-      "name": "Bigodinhos (Prospect)",
+    "projeto-b": {
+      "name": "Projeto B (Prospect)",
       "path": "/home/voce/dev/clientes/prospect",
-      "cwd": "/home/voce/dev/clientes/prospect/bigodinhos/app",
+      "cwd": "/home/voce/dev/clientes/prospect/projeto-b/app",
       "package_manager": "pnpm",
       "dev_command": "pnpm dev",
       "port": 5178,
-      "description": "Vite + React 19 - Proposta Bigodinhos",
+      "description": "Vite + React 19 - Proposta Projeto B",
       <span class="hl">"group": "Prospects"</span>
     }
   },
@@ -204,7 +204,7 @@
 
   <table class="fields">
     <tr><th>Campo</th><th>Descrição</th></tr>
-    <tr><td>chave do projeto</td><td>A chave (<code>"beafaes"</code>, <code>"bigodi-p"</code>) é o atalho usado nos comandos: <code>oro dev beafaes</code> inicia o projeto.</td></tr>
+    <tr><td>chave do projeto</td><td>A chave (<code>"projeto-a"</code>, <code>"projeto-b"</code>) é o atalho usado nos comandos: <code>oro dev projeto-a</code> inicia o projeto.</td></tr>
     <tr><td>name</td><td>Nome exibido na tabela do <code>oro dev list</code>.</td></tr>
     <tr><td>path</td><td>Raiz do projeto.</td></tr>
     <tr><td>cwd</td><td>Diretório onde o comando roda (monorepos); se vazio, é o próprio <code>path</code>.</td></tr>

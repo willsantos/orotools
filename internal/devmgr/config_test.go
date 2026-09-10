@@ -65,8 +65,8 @@ func TestOrderPreserved(t *testing.T) {
 	if len(keys) < 3 {
 		t.Fatalf("too few keys: %v", keys)
 	}
-	// fixture order: beafaes, contabil, delroyt ...
-	want := []string{"beafaes", "contabil", "delroyt"}
+	// fixture order: projeto-a, contabil, delroyt ...
+	want := []string{"projeto-a", "contabil", "delroyt"}
 	for i, k := range want {
 		if keys[i] != k {
 			t.Fatalf("key[%d]=%q want %q (order mismatch)", i, keys[i], k)
@@ -229,10 +229,10 @@ func TestGroupRoundTrip(t *testing.T) {
 	path := filepath.Join(base, "projects.config.json")
 	config := `{
   "projects": {
-    "beafaes": {
-      "name": "Bea Faes",
-      "path": "/home/x/beafaes",
-      "cwd": "/home/x/beafaes/apps/web",
+    "projeto-a": {
+      "name": "Projeto A",
+      "path": "/home/x/projeto-a",
+      "cwd": "/home/x/projeto-a/apps/web",
       "package_manager": "pnpm",
       "dev_command": "pnpm dev",
       "port": 3001,
@@ -257,9 +257,9 @@ func TestGroupRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	p, ok := cfg.Lookup("beafaes")
+	p, ok := cfg.Lookup("projeto-a")
 	if !ok {
-		t.Fatal("project beafaes not found")
+		t.Fatal("project projeto-a not found")
 	}
 	if p.Group != "Clientes" {
 		t.Fatalf("group = %q, want Clientes", p.Group)
