@@ -5,120 +5,163 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Orotools — scaffold e padronização de projetos</title>
 <meta name="description" content="oro: CLI em Go para criação, inicialização e padronização de projetos de software.">
+<meta name="theme-color" content="#0e0e13">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Geist+Mono:wght@400;500&family=Manrope:wght@400;500;600;700&family=Space+Grotesk:wght@500;700&display=swap" rel="stylesheet">
 <style>
+  /* Tokens locais mapeados de oroborus/design-system/tokens.css
+     (ver .specs/features/gh-pages-brand-colors/design.md) */
   :root {
-    --bg: #0d1117;
-    --panel: #161b22;
-    --border: #30363d;
-    --text: #e6edf3;
-    --muted: #9198a1;
-    --gold: #e3b341;
-    --gold-strong: #f0c65a;
+    --oro-background: #0e0e13;
+    --oro-surface-low: #131318;
+    --oro-surface: #19191f;
+    --oro-surface-high: #1f1f26;
+    --oro-surface-highest: #25252c;
+    --oro-foreground: #f8f5fd;
+    --oro-on-surface-variant: #acaab1;
+    --oro-outline-variant: #48474d;
+    --oro-primary: #b3a1ff;
+    --oro-primary-foreground: #310093;
+    --oro-primary-dim: #7a53ff;
+    --oro-secondary: #ff6a9d;
+    --oro-success: #4ade80;
+    --oro-gradient-start: #5b2eff;
+    --oro-gradient-end: #ff2e88;
+    --oro-brand-gradient: linear-gradient(135deg, var(--oro-gradient-start), var(--oro-gradient-end));
+    --oro-font-headline: "Space Grotesk", Manrope, ui-sans-serif, system-ui, sans-serif;
+    --oro-font-body: Manrope, ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+    --oro-font-mono: "Geist Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    --oro-radius-sm: 6px;
+    --oro-radius-md: 8px;
+    --oro-radius-lg: 12px;
   }
   * { box-sizing: border-box; }
   body {
     margin: 0;
-    background: var(--bg);
-    color: var(--text);
-    font: 16px/1.6 -apple-system, "Segoe UI", Roboto, Ubuntu, sans-serif;
+    background: var(--oro-background);
+    color: var(--oro-foreground);
+    font: 16px/1.6 var(--oro-font-body);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
   }
+  ::selection { background: rgb(122 83 255 / 0.45); color: var(--oro-foreground); }
+  :focus-visible { outline: 2px solid var(--oro-primary-dim); outline-offset: 2px; }
   .wrap { max-width: 720px; margin: 0 auto; padding: 0 24px; }
   header { padding: 72px 0 40px; text-align: center; }
   .logo {
     display: inline-block;
-    font-size: 64px; font-weight: 800; letter-spacing: -2px;
-    color: var(--gold);
+    font-family: var(--oro-font-headline);
+    font-size: 64px; font-weight: 700; letter-spacing: -2px;
+    background-image: var(--oro-brand-gradient);
+    -webkit-background-clip: text; background-clip: text;
+    color: transparent;
+    filter: drop-shadow(0 0 18px rgb(91 46 255 / 0.25));
   }
-  .tagline { color: var(--muted); font-size: 20px; margin-top: 4px; }
-  h2 { font-size: 18px; margin: 40px 0 12px; }
+  .tagline { color: var(--oro-on-surface-variant); font-size: 20px; margin-top: 4px; }
+  h2 {
+    font-family: var(--oro-font-headline);
+    font-size: 20px; margin: 40px 0 12px;
+  }
+  h3 { font-family: var(--oro-font-headline); font-size: 15px; margin: 28px 0 10px; }
   .install {
     display: flex; align-items: center; gap: 12px;
-    background: var(--panel);
-    border: 1px solid var(--border);
-    border-radius: 8px;
+    background: var(--oro-surface-low);
+    border: 1px solid var(--oro-outline-variant);
+    border-radius: var(--oro-radius-lg);
     padding: 14px 16px;
-    font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    font-family: var(--oro-font-mono);
     font-size: 14px;
     overflow-x: auto;
   }
   .install code { white-space: nowrap; }
-  .install .prompt { color: var(--gold); user-select: none; }
+  .install .prompt { color: var(--oro-primary); user-select: none; }
   button.copy {
     margin-left: auto;
     background: transparent;
-    color: var(--muted);
-    border: 1px solid var(--border);
-    border-radius: 6px;
+    color: var(--oro-on-surface-variant);
+    border: 1px solid var(--oro-outline-variant);
+    border-radius: var(--oro-radius-sm);
     padding: 4px 10px;
+    font-family: var(--oro-font-body);
     font-size: 12px;
     cursor: pointer;
     flex-shrink: 0;
+    transition: color .15s ease, border-color .15s ease;
   }
-  button.copy:hover { color: var(--text); border-color: var(--muted); }
+  button.copy:hover { color: var(--oro-foreground); border-color: var(--oro-primary); }
+  button.copy.copied { color: var(--oro-success); border-color: var(--oro-success); }
   .actions { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 28px; justify-content: center; }
   a.btn {
     display: inline-block;
     padding: 10px 20px;
-    border-radius: 8px;
+    border-radius: var(--oro-radius-md);
     text-decoration: none;
+    font-family: var(--oro-font-headline);
     font-weight: 600;
-    border: 1px solid var(--border);
+    border: 1px solid var(--oro-outline-variant);
+    transition: background-color .15s ease, border-color .15s ease, color .15s ease;
   }
-  a.btn-primary { background: var(--gold); color: #1a1a1a; border-color: var(--gold); }
-  a.btn-primary:hover { background: var(--gold-strong); }
-  a.btn-ghost { color: var(--text); }
-  a.btn-ghost:hover { border-color: var(--muted); }
-  #download-note { color: var(--muted); font-size: 13px; text-align: center; margin-top: 10px; }
+  a.btn-primary { background: var(--oro-primary); color: var(--oro-primary-foreground); border-color: var(--oro-primary); }
+  a.btn-primary:hover { background: var(--oro-primary-dim); border-color: var(--oro-primary-dim); color: #fff; }
+  a.btn-ghost { color: var(--oro-foreground); }
+  a.btn-ghost:hover { border-color: var(--oro-primary); }
+  #download-note { color: var(--oro-on-surface-variant); font-size: 13px; text-align: center; margin-top: 10px; }
   .fallback { text-align: center; margin-top: 16px; }
-  .fallback a { color: var(--gold); }
+  .fallback a { color: var(--oro-primary); }
+  .fallback a:hover { color: var(--oro-secondary); }
   #assets { display: none; }
   #assets table { width: 100%; border-collapse: collapse; font-size: 14px; }
-  #assets td { padding: 6px 4px; border-bottom: 1px solid var(--border); }
+  #assets td { padding: 6px 4px; border-bottom: 1px solid var(--oro-outline-variant); }
   #assets td:last-child { text-align: right; }
-  #assets a { color: var(--gold); text-decoration: none; font-family: ui-monospace, Menlo, monospace; }
-  #assets a:hover { text-decoration: underline; }
-  .muted { color: var(--muted); font-size: 14px; }
-  h3 { font-size: 15px; margin: 28px 0 10px; }
+  #assets a { color: var(--oro-primary); text-decoration: none; font-family: var(--oro-font-mono); }
+  #assets a:hover { text-decoration: underline; color: var(--oro-secondary); }
+  .muted { color: var(--oro-on-surface-variant); font-size: 14px; }
   pre.code {
-    background: var(--panel);
-    border: 1px solid var(--border);
-    border-radius: 8px;
+    background: var(--oro-surface-low);
+    border: 1px solid var(--oro-outline-variant);
+    border-radius: var(--oro-radius-lg);
     padding: 14px 16px;
-    font: 13px/1.55 ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    font: 13px/1.55 var(--oro-font-mono);
     overflow-x: auto;
     margin: 12px 0;
   }
-  pre.code .hl { color: var(--gold); }
+  pre.code .hl { color: var(--oro-secondary); }
   table.fields { width: 100%; border-collapse: collapse; font-size: 14px; }
   table.fields th {
-    text-align: left; color: var(--muted); font-weight: 600;
+    text-align: left; color: var(--oro-on-surface-variant); font-weight: 600;
     font-size: 12px; text-transform: uppercase; letter-spacing: .04em;
-    padding: 6px 4px; border-bottom: 1px solid var(--border);
+    padding: 6px 4px; border-bottom: 1px solid var(--oro-outline-variant);
   }
   table.fields td {
-    padding: 7px 4px; border-bottom: 1px solid var(--border);
+    padding: 7px 4px; border-bottom: 1px solid var(--oro-outline-variant);
     vertical-align: top;
   }
   table.fields td:first-child {
-    font-family: ui-monospace, Menlo, monospace;
-    color: var(--gold); font-size: 13px; white-space: nowrap;
+    font-family: var(--oro-font-mono);
+    color: var(--oro-primary); font-size: 13px; white-space: nowrap;
   }
   ul.docs { padding-left: 20px; margin: 10px 0; }
   ul.docs li { margin: 6px 0; }
-  ul.docs code { font-family: ui-monospace, Menlo, monospace; font-size: 14px; }
+  ul.docs code { font-family: var(--oro-font-mono); font-size: 14px; }
   main code {
-    font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    font-family: var(--oro-font-mono);
     font-size: 0.92em;
   }
   footer {
     margin-top: 64px;
-    border-top: 1px solid var(--border);
+    background: var(--oro-surface-low);
+    border-top: 1px solid var(--oro-outline-variant);
     padding: 24px 0 48px;
     text-align: center;
-    color: var(--muted);
+    color: var(--oro-on-surface-variant);
     font-size: 14px;
   }
-  footer a { color: var(--text); }
+  footer a { color: var(--oro-primary); }
+  footer a:hover { color: var(--oro-secondary); }
+  @media (prefers-reduced-motion: reduce) {
+    * { transition: none !important; animation: none !important; }
+  }
 </style>
 </head>
 <body>
@@ -239,10 +282,12 @@
   </table>
 </main>
 
-<footer class="wrap">
-  <a href="https://github.com/willsantos/orotools">GitHub</a> ·
-  <a href="https://github.com/willsantos/orotools/releases">Releases</a> ·
-  Licença MIT
+<footer>
+  <div class="wrap">
+    <a href="https://github.com/willsantos/orotools">GitHub</a> ·
+    <a href="https://github.com/willsantos/orotools/releases">Releases</a> ·
+    Licença MIT
+  </div>
 </footer>
 
 <script>
@@ -372,8 +417,9 @@
       var text = btn.getAttribute("data-copy");
       function done() {
         var old = btn.textContent;
+        btn.classList.add("copied");
         btn.textContent = "copiado!";
-        setTimeout(function () { btn.textContent = old; }, 1500);
+        setTimeout(function () { btn.classList.remove("copied"); btn.textContent = old; }, 1500);
       }
       if (navigator.clipboard && navigator.clipboard.writeText) {
         navigator.clipboard.writeText(text).then(done);

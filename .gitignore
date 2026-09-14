@@ -18,3 +18,10 @@ dist/
 .idea/
 .vscode/
 EXPORT/
+
+# Impeccable (artefatos locais da skill/ferramenta; reinstalar com npx impeccable install)
+.agents/
+.opencode/
+.codex/
+.impeccable/
+.agent/skills/impeccable/
