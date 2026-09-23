@@ -10,6 +10,7 @@ import (
 	"oroborus.dev/orotools/internal/agent"
 	"oroborus.dev/orotools/internal/recipe"
 	"oroborus.dev/orotools/internal/repository"
+	"oroborus.dev/orotools/internal/ui"
 )
 
 // PlannedOp describes one external installer invocation.
@@ -153,15 +154,16 @@ func confirm(out io.Writer, in io.Reader, ops []PlannedOp) error {
 	if in == nil {
 		return fmt.Errorf("external installers require --yes in non-interactive mode")
 	}
-	fmt.Fprintln(out, "External installers")
+	pal := ui.PaletteFor(out)
+	fmt.Fprintln(out, pal.Title.Render("External installers"))
 	fmt.Fprintln(out)
 	for _, op := range ops {
-		fmt.Fprintf(out, "• %s\n", op.Label)
+		fmt.Fprintf(out, "%s %s\n", pal.Info.Render("•"), op.Label)
 	}
 	fmt.Fprintln(out)
-	fmt.Fprintln(out, "These commands may download and execute third-party code.")
+	fmt.Fprintln(out, pal.Warn.Render("These commands may download and execute third-party code."))
 	fmt.Fprintln(out)
-	fmt.Fprint(out, "Continue? Y/n ")
+	fmt.Fprint(out, pal.Key.Render("Continue? Y/n "))
 	reader := bufio.NewReader(in)
 	line, err := reader.ReadString('\n')
 	if err != nil && !strings.Contains(err.Error(), "EOF") {

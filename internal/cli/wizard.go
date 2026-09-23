@@ -21,7 +21,7 @@ func promptVariables(decls map[string]recipe.Variable, provided map[string]any) 
 	if len(fields) == 0 {
 		return merged, nil
 	}
-	if err := huh.NewForm(huh.NewGroup(fields...)).Run(); err != nil {
+	if err := newOroForm(huh.NewGroup(fields...)).Run(); err != nil {
 		return nil, fmt.Errorf("wizard: %w", err)
 	}
 	for _, c := range captures {

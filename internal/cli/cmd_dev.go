@@ -292,14 +292,20 @@ func writeDevTable(w io.Writer, cfg *devmgr.Config, base string, filter []string
 	headers = append(headers, "PM", "Porta", "PID")
 
 	// lipgloss/table alinha as colunas por display width (ANSI-aware), o que
-	// mantém marcadores multibyte (▶/○) e ASCII (!) na mesma coluna.
+	// mantém marcadores multibyte (▶/○) e ASCII (!) na mesma coluna. Borda
+	// arredondada só em TTY: sem terminal, a estrutura permanece aplainada
+	// para consumo por scripts e testes (FR-7).
+	border := lipgloss.NormalBorder()
+	if tty {
+		border = lipgloss.RoundedBorder()
+	}
 	t := table.New().
 		Headers(headers...).
-		Border(lipgloss.NormalBorder()).
-		BorderStyle(pal.Muted).
+		Border(border).
+		BorderStyle(pal.Border).
 		StyleFunc(func(r, c int) lipgloss.Style {
 			if r == table.HeaderRow {
-				return lipgloss.NewStyle().Bold(true).Padding(0, 1)
+				return pal.Info.Bold(true).Padding(0, 1)
 			}
 			switch c {
 			case 0:
@@ -835,7 +841,7 @@ func runDevAdd(cmd *cobra.Command, cfg *devmgr.Config, configPath string) error 
 		// nasce no primeiro uso; ENTER vazio = sem grupo.
 		huh.NewInput().Title("Grupo (opcional)").Value(&group).Placeholder(devGroupPlaceholder(cfg)),
 	}
-	if err := huh.NewForm(huh.NewGroup(design...)).Run(); err != nil {
+	if err := newOroForm(huh.NewGroup(design...)).Run(); err != nil {
 		return errWizardCancel
 	}
 	if key == "" {
@@ -882,7 +888,7 @@ func runDevAdd(cmd *cobra.Command, cfg *devmgr.Config, configPath string) error 
 	}
 	var portStr string
 	portField := huh.NewInput().Title("Porta (sugerida: " + portDefault + ")").Value(&portStr).Placeholder("sem porta")
-	if err := huh.NewForm(huh.NewGroup(portField)).Run(); err != nil {
+	if err := newOroForm(huh.NewGroup(portField)).Run(); err != nil {
 		return errWizardCancel
 	}
 	if portStr != "" {

@@ -9,6 +9,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 
 	"oroborus.dev/orotools/internal/skill"
+	"oroborus.dev/orotools/internal/ui"
 )
 
 // errPickerCancel marca a saída do picker sem confirmação (esc/ctrl+c); o
@@ -42,25 +43,27 @@ func (s tuiSkillSelector) Select(title string, options []skillOption) ([]string,
 // --- estilos ---
 
 var (
-	pickerBannerColors = []string{"#2E5BE6", "#3773EE", "#3F8CF3", "#43A5F5", "#47BCF7", "#4BD3F9"}
+	// pickerBannerStops interpola o gradiente de marca (#5b2eff → #ff2e88)
+	// pelas 6 linhas do banner — a assinatura rara desta TUI (o "hero" da CLI).
+	pickerBannerStops = ui.GradientStops(ui.ColorGradientStart, ui.ColorGradientEnd, 6)
 
-	pickerAccent      = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#4D9FFF"))
-	pickerGroupArrow  = lipgloss.NewStyle().Foreground(lipgloss.Color("#3F8CF3"))
-	pickerGroupTitle  = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#4D9FFF"))
-	pickerCount       = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
-	pickerHint        = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
-	pickerName        = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("252"))
-	pickerNameOn      = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#7CC4FF"))
-	pickerMarkerOff   = lipgloss.NewStyle().Foreground(lipgloss.Color("243"))
-	pickerMarkerOn    = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#43E5A0"))
-	pickerDesc        = lipgloss.NewStyle().Foreground(lipgloss.Color("243"))
-	pickerCursorBg    = lipgloss.NewStyle().Background(lipgloss.Color("236"))
-	pickerTagline     = lipgloss.NewStyle().Italic(true).Foreground(lipgloss.Color("241"))
-	pickerTip         = lipgloss.NewStyle().Foreground(lipgloss.Color("#4D9FFF"))
-	pickerDivider     = lipgloss.NewStyle().Foreground(lipgloss.Color("239"))
-	pickerDim         = lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
-	pickerSelectedSum = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#43E5A0"))
-	pickerBarBorder   = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color("238"))
+	pickerAccent      = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(ui.ColorPrimary))
+	pickerGroupArrow  = lipgloss.NewStyle().Foreground(lipgloss.Color(ui.ColorPrimary))
+	pickerGroupTitle  = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(ui.ColorPrimary))
+	pickerCount       = lipgloss.NewStyle().Foreground(lipgloss.Color(ui.ColorContentSec))
+	pickerHint        = lipgloss.NewStyle().Foreground(lipgloss.Color(ui.ColorContentSec))
+	pickerName        = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(ui.ColorContent))
+	pickerNameOn      = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(ui.ColorPrimary))
+	pickerMarkerOff   = lipgloss.NewStyle().Foreground(lipgloss.Color(ui.ColorMuted))
+	pickerMarkerOn    = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(ui.ColorSuccess))
+	pickerDesc        = lipgloss.NewStyle().Foreground(lipgloss.Color(ui.ColorContentSec))
+	pickerCursorBg    = lipgloss.NewStyle().Background(lipgloss.Color(ui.ColorSurfaceHighest)).Foreground(lipgloss.Color(ui.ColorContent))
+	pickerTagline     = lipgloss.NewStyle().Italic(true).Foreground(lipgloss.Color(ui.ColorMuted))
+	pickerTip         = lipgloss.NewStyle().Foreground(lipgloss.Color(ui.ColorAccent))
+	pickerDivider     = lipgloss.NewStyle().Foreground(lipgloss.Color(ui.ColorBorder))
+	pickerDim         = lipgloss.NewStyle().Foreground(lipgloss.Color(ui.ColorMuted))
+	pickerSelectedSum = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(ui.ColorSuccess))
+	pickerBarBorder   = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color(ui.ColorBorder))
 )
 
 const (
@@ -445,6 +448,19 @@ func (m *skillPicker) ensureVisible() {
 // --- view ---
 
 func (m skillPicker) View() string {
+	// A TUI controla o próprio canvas: fundo #0e0e13 preenche a tela toda,
+	// com o conteúdo deitado no topo esquerdo.
+	bg := lipgloss.NewStyle().Background(lipgloss.Color(ui.ColorBackground))
+	content := m.content()
+	padded := bg.Width(max(0, m.width)).Render(content)
+	return lipgloss.Place(max(0, m.width), max(0, m.height),
+		lipgloss.Left, lipgloss.Top, padded,
+		lipgloss.WithWhitespaceBackground(lipgloss.Color(ui.ColorBackground)))
+}
+
+// content monta as regiões do picker (header, lista, detalhe e footer) sem o
+// preenchimento de fundo, que é responsabilidade de View.
+func (m skillPicker) content() string {
 	if m.help {
 		return m.helpView()
 	}
@@ -692,7 +708,8 @@ func bannerWord(word string) [6]string {
 	return out
 }
 
-// buildBanner devolve as 6 linhas do banner com gradiente azul→ciano.
+// buildBanner devolve as 6 linhas do banner com o gradiente de marca
+// (#5b2eff → #ff2e88) — o único momento de assinatura da CLI.
 func buildBanner() []string {
 	a := bannerWord("ORO")
 	b := bannerWord("SKILLS")
@@ -700,7 +717,7 @@ func buildBanner() []string {
 	for j := 0; j < 6; j++ {
 		line := strings.TrimRight(a[j], " ") + "   " + strings.TrimLeft(b[j], " ")
 		rows[j] = lipgloss.NewStyle().
-			Foreground(lipgloss.Color(pickerBannerColors[j])).
+			Foreground(lipgloss.Color(pickerBannerStops[j])).
 			Render(line)
 	}
 	return rows

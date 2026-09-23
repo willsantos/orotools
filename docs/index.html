@@ -144,6 +144,17 @@
   ul.docs { padding-left: 20px; margin: 10px 0; }
   ul.docs li { margin: 6px 0; }
   ul.docs code { font-family: var(--oro-font-mono); font-size: 14px; }
+  figure.shot { margin: 28px 0 0; }
+  figure.shot img {
+    display: block; margin: 0 auto;
+    max-width: 100%; height: auto;
+    border-radius: var(--oro-radius-lg);
+  }
+  figure.shot figcaption {
+    margin-top: 10px; text-align: center;
+    color: var(--oro-on-surface-variant); font-size: 13px;
+  }
+  figure.shot figcaption code { font-size: 12px; }
   main code {
     font-family: var(--oro-font-mono);
     font-size: 0.92em;
@@ -174,8 +185,8 @@
   <h2>Install</h2>
   <div class="install">
     <span class="prompt">$</span>
-    <code id="install-cmd">curl -fsSL https://willsantos.github.io/orotools/install.sh | bash</code>
-    <button class="copy" id="copy-btn" data-copy="curl -fsSL https://willsantos.github.io/orotools/install.sh | bash">copiar</button>
+    <code id="install-cmd">curl -fsSL https://orotools.willsantos.dev/install.sh | bash</code>
+    <button class="copy" id="copy-btn" data-copy="curl -fsSL https://orotools.willsantos.dev/install.sh | bash">copiar</button>
   </div>
   <p class="muted" style="margin-top:10px">
     Detecta SO e arquitetura, valida o checksum sha256 e instala em
@@ -185,6 +196,7 @@
   <div class="actions">
     <a class="btn btn-primary" id="download-btn" href="releases" hidden>Baixar</a>
     <a class="btn btn-ghost" href="https://github.com/willsantos/orotools/releases">Todas as releases</a>
+    <a class="btn btn-ghost" href="docs/">Documentação</a>
   </div>
   <p id="download-note"></p>
   <p class="fallback">
@@ -206,6 +218,31 @@
     Stacks oficiais: <code>dotnet</code>, <code>dotnet-next</code>, <code>fastify-next</code>, <code>rails</code>.
     Adote um repositório existente com <code>oro init</code>.
   </p>
+
+  <section id="screens">
+    <h2>A CLI em ação</h2>
+    <p class="muted">
+      Interface com a identidade Oroborus — dark, violeta como voz ativa e o
+      gradiente reservado ao banner do wizard de skills. Capturas reais do
+      terminal (truecolor).
+    </p>
+    <figure class="shot">
+      <img src="screens/picker.png" alt="Wizard de instalação de skills (oro skills) em tela cheia: banner ORO SKILLS com gradiente violeta-magenta, grupos colapsáveis, painel de detalhes e barra de atalhos" width="852" height="774" loading="lazy">
+      <figcaption><code>oro skills</code> — catálogo com grupos, filtro e detalhes</figcaption>
+    </figure>
+    <figure class="shot">
+      <img src="screens/devlist.png" alt="Tabela do comando oro dev list com colunas Status, Atalho, Nome, Grupo, PM, Porta e PID, bordas arredondadas e atalhos em violeta" width="696" height="374" loading="lazy">
+      <figcaption><code>oro dev list</code> — dev manager com grupos e status</figcaption>
+    </figure>
+    <figure class="shot">
+      <img src="screens/dryrun.png" alt="Saída do comando oro new demo --dry-run com plano de operações: marcadores de adição em verde e comandos em violeta" width="501" height="634" loading="lazy">
+      <figcaption><code>oro new demo --dry-run</code> — plano antes de executar</figcaption>
+    </figure>
+    <figure class="shot">
+      <img src="screens/doctor.png" alt="Saída do comando oro doctor --stack dotnet com título em lavanda e requisitos verificados com check verde" width="395" height="294" loading="lazy">
+      <figcaption><code>oro doctor</code> — validação de requisitos da stack</figcaption>
+    </figure>
+  </section>
 
   <h2>Dev manager — o arquivo <code>projects.config.json</code></h2>
   <p class="muted">
@@ -286,6 +323,7 @@
   <div class="wrap">
     <a href="https://github.com/willsantos/orotools">GitHub</a> ·
     <a href="https://github.com/willsantos/orotools/releases">Releases</a> ·
+    <a href="docs/">Documentação</a> ·
     Licença MIT
   </div>
 </footer>

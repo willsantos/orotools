@@ -2,7 +2,7 @@
 # install.sh — instala o oro a partir da última release do GitHub.
 #
 # Uso:
-#   curl -fsSL https://willsantos.github.io/orotools/install.sh | bash
+#   curl -fsSL https://orotools.willsantos.dev/install.sh | bash
 #   install.sh --version vX.Y.Z   (instala uma versão específica)
 #
 # Requisitos: DIST-06, DIST-07, NFR-2 (POSIX sh — compatível com dash;

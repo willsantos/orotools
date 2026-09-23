@@ -110,7 +110,7 @@ func runNew(opts newOptions) error {
 	}
 
 	if opts.dryRun {
-		fmt.Fprint(out, plan.DryRun())
+		plan.FprintDryRun(out)
 		return nil
 	}
 

@@ -10,6 +10,7 @@ import (
 
 	"oroborus.dev/orotools/internal/recipe"
 	"oroborus.dev/orotools/internal/safeexec"
+	"oroborus.dev/orotools/internal/ui"
 )
 
 func errUnknownStep(typ string) error {
@@ -154,7 +155,8 @@ func execExec(r *Result, step recipe.Step, ctx Context, runner ExecRunner) {
 
 // execMessage prints step.Text to stdout. Spec section 20.
 func execMessage(r *Result, step recipe.Step, ctx Context) {
-	fmt.Fprintln(ctx.stdout(), step.Text)
+	out := ctx.stdout()
+	fmt.Fprintln(out, ui.PaletteFor(out).Info.Render(step.Text))
 	r.Action = ActMessaged
 }
 

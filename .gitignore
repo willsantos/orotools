@@ -6,10 +6,15 @@
 coverage.out
 vendor/
 
-# Node (legacy TS under legacy/)
+# Node (legacy TS under legacy/; docs-site/)
 node_modules/
 dist/
 *.tsbuildinfo
+
+# Docusaurus (docs-site/)
+docs-site/build/
+docs-site/.docusaurus/
+docs-site/.cache-loader/
 .turbo/
 
 # Editors / OS

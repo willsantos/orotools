@@ -5,7 +5,7 @@ CLI em Go (`oro`) para criação, inicialização e padronização de projetos d
 ## Install
 
 ```bash
-curl -fsSL https://willsantos.github.io/orotools/install.sh | bash
+curl -fsSL https://orotools.willsantos.dev/install.sh | bash
 ```
 
 O script detecta SO e arquitetura, valida o checksum sha256 e instala o binário
@@ -14,7 +14,7 @@ em `~/.local/bin` (root: `/usr/local/bin`).
 Para instalar uma versão específica:
 
 ```bash
-curl -fsSL https://willsantos.github.io/orotools/install.sh | bash -s -- --version v0.5.0
+curl -fsSL https://orotools.willsantos.dev/install.sh | bash -s -- --version v0.5.0
 ```
 
 Atualizar uma instalação existente:

@@ -597,7 +597,7 @@ func (huhSkillSelector) Select(title string, options []skillOption) ([]string, e
 		Title(title).
 		Options(huhOpts...).
 		Value(&selected)
-	if err := huh.NewForm(huh.NewGroup(field)).Run(); err != nil {
+	if err := newOroForm(huh.NewGroup(field)).Run(); err != nil {
 		return nil, err
 	}
 	return selected, nil
