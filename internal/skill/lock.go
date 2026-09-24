@@ -67,8 +67,9 @@ func ReadLock(path string) (*Lock, error) {
 	return lock, nil
 }
 
-// ParseLock decodes src as a Lock schema v1. Unknown fields, duplicate IDs and
-// invalid records are errors (strict).
+// ParseLock decodes src as a Lock schema v1. Unknown fields, duplicate
+// (id, target) pairs and invalid records are errors (strict). The same ID at
+// distinct targets is valid: each entry is one installation (multi-agent).
 func ParseLock(src []byte) (*Lock, error) {
 	dec := yaml.NewDecoder(strings.NewReader(string(src)))
 	dec.KnownFields(true)
@@ -85,13 +86,24 @@ func ParseLock(src []byte) (*Lock, error) {
 		if err := validateLockEntry(e); err != nil {
 			return nil, err
 		}
-		if seen[e.ID] {
-			return nil, fmt.Errorf("skills lock: id duplicado %q", e.ID)
+		key := e.ID + "\x00" + e.Target
+		if seen[key] {
+			return nil, fmt.Errorf("skills lock: par id/target duplicado (%q em %q)", e.ID, e.Target)
 		}
-		seen[e.ID] = true
+		seen[key] = true
 	}
-	sort.Slice(lock.Skills, func(i, j int) bool { return lock.Skills[i].ID < lock.Skills[j].ID })
+	sort.SliceStable(lock.Skills, func(i, j int) bool { return lockEntryLess(i, j, lock.Skills) })
 	return &lock, nil
+}
+
+// lockEntryLess orders entries by ID, then by Target as tiebreak — the same
+// skill installed on several agents stays adjacent and deterministic.
+func lockEntryLess(i, j int, s []LockEntry) bool {
+	a, b := s[i], s[j]
+	if a.ID != b.ID {
+		return a.ID < b.ID
+	}
+	return a.Target < b.Target
 }
 
 func validateLockEntry(e *LockEntry) error {
@@ -121,7 +133,10 @@ func validateLockEntry(e *LockEntry) error {
 	return nil
 }
 
-// Lookup returns the record with the given ID.
+// Lookup returns the record with the given ID. In a multi-agent lock the same
+// ID may exist at several targets; Lookup returns the first in sort order —
+// manifest-mode callers have exactly one entry per ID. Prefer LookupTarget
+// whenever the destination matters.
 func (l *Lock) Lookup(id string) (LockEntry, bool) {
 	for _, e := range l.Skills {
 		if e.ID == id {
@@ -131,16 +146,28 @@ func (l *Lock) Lookup(id string) (LockEntry, bool) {
 	return LockEntry{}, false
 }
 
-// Upsert inserts or replaces the record for entry.ID keeping the list sorted.
+// LookupTarget returns the record for the given ID at the exact target — the
+// ownership check of an installation (multi-agent: one entry per destination).
+func (l *Lock) LookupTarget(id, target string) (LockEntry, bool) {
+	for _, e := range l.Skills {
+		if e.ID == id && e.Target == target {
+			return e, true
+		}
+	}
+	return LockEntry{}, false
+}
+
+// Upsert inserts or replaces the record for (entry.ID, entry.Target) keeping
+// the list sorted by ID, then Target.
 func (l *Lock) Upsert(entry LockEntry) {
 	for i := range l.Skills {
-		if l.Skills[i].ID == entry.ID {
+		if l.Skills[i].ID == entry.ID && l.Skills[i].Target == entry.Target {
 			l.Skills[i] = entry
 			return
 		}
 	}
 	l.Skills = append(l.Skills, entry)
-	sort.Slice(l.Skills, func(i, j int) bool { return l.Skills[i].ID < l.Skills[j].ID })
+	sort.SliceStable(l.Skills, func(i, j int) bool { return lockEntryLess(i, j, l.Skills) })
 }
 
 // Save serialises the lock deterministically and writes it atomically:
@@ -155,7 +182,7 @@ func (l *Lock) Save(path string) error {
 	}
 	entries := make([]LockEntry, len(l.Skills))
 	copy(entries, l.Skills)
-	sort.Slice(entries, func(i, j int) bool { return entries[i].ID < entries[j].ID })
+	sort.SliceStable(entries, func(i, j int) bool { return lockEntryLess(i, j, entries) })
 	out, err := yaml.Marshal(&Lock{Version: l.Version, Skills: entries})
 	if err != nil {
 		return fmt.Errorf("marshal skills lock: %w", err)

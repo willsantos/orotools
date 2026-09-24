@@ -1,10 +1,13 @@
 package cli
 
 import (
+	"bytes"
 	"strings"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
+
+	"oroborus.dev/orotools/internal/skill"
 )
 
 func pickerFixture() []skillOption {
@@ -193,5 +196,111 @@ func TestWrapAndTruncate(t *testing.T) {
 		if len([]rune(l)) > 10 {
 			t.Errorf("linha %q excede a largura 10", l)
 		}
+	}
+}
+
+// --- agent picker (skills-multi-agent) ---
+
+func agentChoicesFixture() []agentChoice {
+	return []agentChoice{
+		{id: "cursor", dir: ".cursor/skills"},
+		{id: "codex", dir: ".codex/skills"},
+	}
+}
+
+func TestAgentPickerToggleAndConfirm(t *testing.T) {
+	m := newAgentPicker("Selecione os agents de destino", agentChoicesFixture())
+	// Enter sem nada marcado não sai: marca a dica (FR-2).
+	out, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
+	m = out.(agentPicker)
+	if m.hinted != true {
+		t.Error("enter sem seleção deve exibir a dica inline")
+	}
+	if len(m.selectedIDs()) != 0 {
+		t.Errorf("selectedIDs = %v; want vazio", m.selectedIDs())
+	}
+	// Espaço marca o cursor; down + espaço marca o segundo.
+	out, _ = m.handleKey(tea.KeyMsg{Type: tea.KeySpace})
+	m = out.(agentPicker)
+	if !m.marked[0] || m.hinted {
+		t.Errorf("espaço deve marcar o cursor e limpar a dica: marked=%v hinted=%v", m.marked, m.hinted)
+	}
+	out, _ = m.handleKey(tea.KeyMsg{Type: tea.KeyDown})
+	m = out.(agentPicker)
+	out, _ = m.handleKey(tea.KeyMsg{Type: tea.KeySpace})
+	m = out.(agentPicker)
+	if ids := m.selectedIDs(); len(ids) != 2 {
+		t.Errorf("selectedIDs = %v; want 2", ids)
+	}
+	// Enter confirma sem cancelar.
+	out, cmd := m.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
+	got := out.(agentPicker)
+	if got.cancel || cmd == nil {
+		t.Error("enter com seleção deve confirmar (tea.Quit)")
+	}
+}
+
+func TestAgentPickerCancel(t *testing.T) {
+	m := newAgentPicker("Selecione", agentChoicesFixture())
+	out, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyEsc})
+	if !out.(agentPicker).cancel {
+		t.Error("esc deve cancelar")
+	}
+	m = newAgentPicker("Selecione", agentChoicesFixture())
+	out, _ = m.handleKey(tea.KeyMsg{Type: tea.KeyCtrlC})
+	if !out.(agentPicker).cancel {
+		t.Error("ctrl+c deve cancelar")
+	}
+}
+
+func TestAgentPickerViewSmoke(t *testing.T) {
+	m := newAgentPicker("Selecione os agents de destino", agentChoicesFixture())
+	m.width, m.height = 100, 30
+	view := m.View()
+	for _, want := range []string{"cursor", "codex", ".cursor/skills", ".codex/skills",
+		"espaço", "enter", "esc", "nenhum marcado"} {
+		if !strings.Contains(view, want) {
+			t.Errorf("view não contém %q", want)
+		}
+	}
+	// Largura pequena: banner degrada, sem pânico.
+	m.width, m.height = 50, 12
+	if view := m.View(); !strings.Contains(view, "ORO SKILLS") {
+		t.Error("view estreita deve conter o título simples")
+	}
+	// Dica de seleção mínima aparece no corpo.
+	m = newAgentPicker("Selecione", agentChoicesFixture())
+	m.width, m.height = 100, 30
+	out, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
+	m = out.(agentPicker)
+	if view := m.View(); !strings.Contains(view, "selecione ao menos um agent") {
+		t.Error("view deve conter a dica de seleção mínima")
+	}
+}
+
+// skills-multi-agent FR-13: com lock em mais de um agent, a listagem de
+// instaladas mostra o destino.
+func TestRenderInstalledMultiAgentShowsTarget(t *testing.T) {
+	lock := skill.NewLock()
+	mk := func(target string) skill.LockEntry {
+		return skill.LockEntry{ID: "github:willsantos/skills_AI/a", Name: "a",
+			Source: "github", SourceRef: "willsantos/skills_AI", Path: "a",
+			Version: "1.0.0", Target: target, ContentSHA256: "sha256:x"}
+	}
+	lock.Upsert(mk(".codex/skills/a"))
+	lock.Upsert(mk(".opencode/skills/a"))
+	var out bytes.Buffer
+	renderInstalled(&out, lock)
+	if !strings.Contains(out.String(), ".codex/skills/a") || !strings.Contains(out.String(), ".opencode/skills/a") {
+		t.Errorf("listagem multi-agent deve mostrar os targets: %s", out.String())
+	}
+
+	// Lock single-agent mantém a linha enxuta de hoje.
+	single := skill.NewLock()
+	single.Upsert(mk(".codex/skills/a"))
+	out.Reset()
+	renderInstalled(&out, single)
+	if strings.Contains(out.String(), ".codex/skills/a") {
+		t.Errorf("listagem single-agent não deveria mostrar o target: %s", out.String())
 	}
 }

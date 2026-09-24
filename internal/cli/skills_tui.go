@@ -490,7 +490,7 @@ func (m skillPicker) headerView() string {
 		pickerTagline.Render(m.title),
 		pickerTip.Render("ⓘ dica: `oro skills update` mantém as skills gerenciadas atualizadas"),
 		"",
-		pickerDivider.Render(strings.Repeat("─", min(m.width-4, 64))),
+		pickerDivider.Render(strings.Repeat("─", max(0, min(m.width-4, 64)))),
 	)
 	if m.filtering {
 		lines = append(lines, "", pickerAccent.Render("filtro › ")+pickerName.Render(m.filter)+"█")
@@ -721,6 +721,198 @@ func buildBanner() []string {
 			Render(line)
 	}
 	return rows
+}
+
+// --- agent picker ---
+
+// agentChoice é um agent de destino detectado no projeto: id canônico e o
+// diretório de skills que o motivou.
+type agentChoice struct {
+	id  string
+	dir string
+}
+
+// tuiAgentSelector é o selector de agents de produção (caso ambíguo do modo
+// ad-hoc): TUI compacta em alt-screen com a identidade do picker de skills.
+type tuiAgentSelector struct{}
+
+func (tuiAgentSelector) Select(title string, choices []agentChoice) ([]string, error) {
+	p := tea.NewProgram(newAgentPicker(title, choices), tea.WithAltScreen(), tea.WithMouseCellMotion())
+	out, err := p.Run()
+	if err != nil {
+		return nil, err
+	}
+	m, ok := out.(agentPicker)
+	if !ok {
+		return nil, fmt.Errorf("skills: modelo inesperado do agent picker: %T", out)
+	}
+	if m.cancel {
+		return nil, errPickerCancel
+	}
+	return m.selectedIDs(), nil
+}
+
+// agentPicker é o modelo da seleção multi-agente: lista plana com marcadores,
+// enter exige ≥1 (dica inline) e esc/ctrl+c cancela o wizard inteiro.
+type agentPicker struct {
+	title   string
+	choices []agentChoice
+	marked  []bool
+	cursor  int
+	cancel  bool
+	hinted  bool // enter sem seleção: dica inline em vez de sair (FR-2)
+	width   int
+	height  int
+}
+
+func newAgentPicker(title string, choices []agentChoice) agentPicker {
+	return agentPicker{
+		title:   title,
+		choices: choices,
+		marked:  make([]bool, len(choices)),
+		width:   80,
+		height:  24,
+	}
+}
+
+// Init não agenda comandos: a primeira WindowSizeMsg chega do programa.
+func (m agentPicker) Init() tea.Cmd {
+	return nil
+}
+
+func (m agentPicker) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	switch msg := msg.(type) {
+	case tea.WindowSizeMsg:
+		m.width, m.height = msg.Width, msg.Height
+		return m, nil
+	case tea.KeyMsg:
+		return m.handleKey(msg)
+	}
+	return m, nil
+}
+
+func (m agentPicker) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "ctrl+c", "esc":
+		m.cancel = true
+		return m, tea.Quit
+	case "up", "k":
+		if m.cursor > 0 {
+			m.cursor--
+		}
+	case "down", "j":
+		if m.cursor < len(m.choices)-1 {
+			m.cursor++
+		}
+	case " ", "space":
+		if len(m.choices) > 0 {
+			m.marked[m.cursor] = !m.marked[m.cursor]
+			m.hinted = false
+		}
+	case "enter":
+		if m.selectedCount() == 0 {
+			m.hinted = true
+			return m, nil
+		}
+		return m, tea.Quit
+	}
+	return m, nil
+}
+
+func (m agentPicker) selectedIDs() []string {
+	var ids []string
+	for i, c := range m.choices {
+		if m.marked[i] {
+			ids = append(ids, c.id)
+		}
+	}
+	return ids
+}
+
+func (m agentPicker) selectedCount() int {
+	n := 0
+	for _, v := range m.marked {
+		if v {
+			n++
+		}
+	}
+	return n
+}
+
+func (m agentPicker) View() string {
+	// Mesmo canvas do picker de skills: fundo #0e0e13 cobrindo a tela toda.
+	bg := lipgloss.NewStyle().Background(lipgloss.Color(ui.ColorBackground))
+	padded := bg.Width(max(0, m.width)).Render(m.content())
+	return lipgloss.Place(max(0, m.width), max(0, m.height),
+		lipgloss.Left, lipgloss.Top, padded,
+		lipgloss.WithWhitespaceBackground(lipgloss.Color(ui.ColorBackground)))
+}
+
+func (m agentPicker) content() string {
+	header := []string{}
+	if m.width >= bannerMinWidth {
+		header = append(header, buildBanner()...)
+	} else {
+		header = append(header, pickerAccent.Render("ORO SKILLS"))
+	}
+	header = append(header,
+		"",
+		pickerTagline.Render(m.title),
+		pickerDim.Render("sem orotools.yaml — as skills selecionadas instalam em todos os agents marcados"),
+		"",
+		pickerDivider.Render(strings.Repeat("─", max(0, min(m.width-4, 64)))),
+	)
+	var lines []string
+	for i, c := range m.choices {
+		marker, markerStyle := "□", pickerMarkerOff
+		nameStyle := pickerName
+		if m.marked[i] {
+			marker, markerStyle = "■", pickerMarkerOn
+			nameStyle = pickerNameOn
+		}
+		line := markerStyle.Render(marker) + " " + nameStyle.Render(c.id)
+		if m.cursor == i {
+			if pad := m.width - lipgloss.Width(line); pad > 0 {
+				line = pickerCursorBg.Render(line + strings.Repeat(" ", pad))
+			}
+		}
+		lines = append(lines, line, "  "+pickerDesc.Render(c.dir))
+	}
+	body := lipgloss.JoinVertical(lipgloss.Center, header...) + "\n" + strings.Join(lines, "\n")
+	if m.hinted {
+		body += "\n" + pickerHint.Render("selecione ao menos um agent (espaço marca)")
+	}
+	return body + "\n" + m.footerView()
+}
+
+func (m agentPicker) footerView() string {
+	var parts []string
+	for _, kv := range [][2]string{
+		{"↑/↓", "mover"},
+		{"espaço", "marcar"},
+		{"enter", "confirmar"},
+		{"esc", "sair"},
+	} {
+		parts = append(parts, pickerAccent.Render(kv[0])+pickerDim.Render(" "+kv[1]))
+	}
+	left := strings.Join(parts, pickerDim.Render(" · "))
+	right := agentSummary(m)
+	sep := m.width - lipgloss.Width(left) - lipgloss.Width(right) - 4
+	if sep < 3 {
+		return pickerBarBorder.Width(max(0, m.width-2)).Render(left)
+	}
+	return pickerBarBorder.Width(max(0, m.width-2)).Render(left + strings.Repeat(" ", sep) + right)
+}
+
+func agentSummary(m agentPicker) string {
+	switch n := m.selectedCount(); n {
+	case 0:
+		return pickerDim.Render("nenhum marcado")
+	case 1:
+		return pickerSelectedSum.Render("1 marcado")
+	default:
+		return pickerSelectedSum.Render(fmt.Sprintf("%d marcados", n))
+	}
 }
 
 // --- utilitários de texto ---

@@ -9,7 +9,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
-	"sort"
+	"strings"
 
 	"github.com/charmbracelet/huh"
 	"golang.org/x/term"
@@ -37,10 +37,11 @@ type skillsOptions struct {
 	recipeCatalog skill.CatalogProvider
 	loadGitHub    func(context.Context) ([]skill.Candidate, []skill.Warning, func(), error)
 	// selector overrides the interactive multi-select. stdinTTY decides the
-	// interactivity check; nil defers to TTY detection on stdin.
-	selector  skillSelector
-	stdinTTY  *bool
-	pickAgent func(candidates []string) (string, error)
+	// interactivity check; nil defers to TTY detection on stdin. pickAgents
+	// overrides the agent multi-select of the ambiguous ad-hoc case.
+	selector   skillSelector
+	stdinTTY   *bool
+	pickAgents func(candidates []string) ([]string, error)
 }
 
 // skillOption is one selectable entry of the wizard. Beyond the legacy flat
@@ -64,23 +65,26 @@ type skillSelector interface {
 
 // skillsContext bundles the resolved project state shared by `oro skills` and
 // `oro skills update`. Loading it performs no mutation. In ad-hoc mode (no
-// orotools.yaml) the manifest is nil and only the GitHub catalog applies.
+// orotools.yaml) the manifest is nil and only the GitHub catalog applies;
+// agents carries the resolved destinations (one entry for the manifest flow,
+// one per selected agent for the wizard in ad-hoc mode).
 type skillsContext struct {
 	svc       skill.Service
 	m         *manifest.Manifest // nil em modo ad-hoc
 	lock      *skill.Lock
 	adHoc     bool
-	agentNote string // info sobre a escolha de agent, exibida pelo chamador
+	agents    []string // destinos de instalação resolvidos (≥1 no wizard)
+	agentNote string   // info sobre a escolha de agent, exibida pelo chamador
 }
 
 // contextOptions parametrizes the context resolution for the two skills
-// commands: the wizard is interactive (may ask the agent), update is not.
+// commands: the wizard is interactive (may ask the agents), update is not.
 type contextOptions struct {
 	manifestPath     string
 	manifestExplicit bool // --manifest passado explicitamente
 	agentFlag        string
 	interactive      bool
-	pickAgent        func(candidates []string) (string, error)
+	pickAgents       func(candidates []string) ([]string, error)
 }
 
 func loadSkillsContext(o contextOptions) (skillsContext, error) {
@@ -105,7 +109,7 @@ func loadSkillsContext(o contextOptions) (skillsContext, error) {
 		if err != nil {
 			return skillsContext{}, err
 		}
-		return skillsContext{svc: svc, m: m, lock: lock}, nil
+		return skillsContext{svc: svc, m: m, lock: lock, agents: []string{svc.Agent}}, nil
 	case errors.Is(err, fs.ErrNotExist) && !o.manifestExplicit:
 		// Ad-hoc mode (emenda FR-2/decisão 12): operate without a manifest,
 		// locating the agent skills directories directly.
@@ -127,8 +131,8 @@ func readLockOrEmpty(path string) (*skill.Lock, error) {
 }
 
 // loadAdHocContext resolves the agent without a manifest: --agent wins, then
-// the update flow derives it from the lock targets, then the wizard detects
-// existing skills directories (asking when ambiguous), defaulting to
+// the update flow derives each entry from its lock target, then the wizard
+// detects existing skills directories (asking when ambiguous), defaulting to
 // opencode when none exists.
 func loadAdHocContext(manifestAbs string, o contextOptions) (skillsContext, error) {
 	base := filepath.Dir(manifestAbs)
@@ -151,22 +155,22 @@ func loadAdHocContext(manifestAbs string, o contextOptions) (skillsContext, erro
 		if _, err := skill.SkillsDir(o.agentFlag); err != nil {
 			return skillsContext{}, fmt.Errorf("--agent inválido: %w", err)
 		}
+		// Update ad-hoc: o agent de cada entrada vem do target no lock; a flag
+		// não altera o processamento e a nota explica (skills-multi-agent FR-16).
+		if !o.interactive && len(lock.Skills) > 0 {
+			ctx.agentNote = "sem orotools.yaml: update deriva os agents dos targets do lock (--agent ignorado)"
+		}
 		ctx.svc.Agent = o.agentFlag
+		ctx.agents = []string{o.agentFlag}
 		return ctx, nil
 	case !o.interactive:
-		if len(lock.Skills) > 0 {
-			agent, err := agentFromLock(lock)
-			if err != nil {
-				return skillsContext{}, err
-			}
-			ctx.svc.Agent = agent
-			return ctx, nil
-		}
+		// Update: cada entrada do lock carrega o próprio agent (updateOne deriva
+		// do target); sem lock não há destino a resolver.
 		ctx.svc.Agent = "opencode"
 		return ctx, nil
 	default:
 		var found []string
-		for _, agent := range []string{"opencode", "cursor", "claude-code", "codex", "copilot"} {
+		for _, agent := range skill.AllAgents {
 			dir, err := skill.SkillsDir(agent)
 			if err == nil && dirExists(filepath.Join(base, dir)) {
 				found = append(found, agent)
@@ -175,48 +179,57 @@ func loadAdHocContext(manifestAbs string, o contextOptions) (skillsContext, erro
 		switch len(found) {
 		case 1:
 			ctx.svc.Agent = found[0]
+			ctx.agents = found
 			dir, _ := skill.SkillsDir(found[0])
 			ctx.agentNote = fmt.Sprintf("sem orotools.yaml: agent detectado por %s (use --agent para escolher outro)", dir)
 		case 0:
 			ctx.svc.Agent = "opencode"
+			ctx.agents = []string{"opencode"}
 			ctx.agentNote = "sem orotools.yaml: nenhum diretório de skills encontrado; usando .opencode/skills (use --agent para escolher outro)"
 		default:
-			if o.pickAgent == nil {
+			if o.pickAgents == nil {
 				return skillsContext{}, fmt.Errorf("múltiplos diretórios de skills encontrados (%v); use --agent para escolher", found)
 			}
-			chosen, err := o.pickAgent(found)
+			chosen, err := o.pickAgents(found)
 			if err != nil {
-				return skillsContext{}, fmt.Errorf("escolha de agent cancelada")
+				return skillsContext{}, err
 			}
-			ctx.svc.Agent = chosen
+			if len(chosen) == 0 {
+				return skillsContext{}, fmt.Errorf("nenhum agent selecionado")
+			}
+			ctx.agents = orderAgents(chosen)
+			ctx.svc.Agent = ctx.agents[0]
+			ctx.agentNote = fmt.Sprintf("sem orotools.yaml: skills serão instaladas em %s", strings.Join(agentDirs(ctx.agents), ", "))
 		}
 		return ctx, nil
 	}
 }
 
-// agentFromLock reverse-looks the agent from the lock targets; mixed targets
-// need an explicit --agent without a manifest.
-func agentFromLock(lock *skill.Lock) (string, error) {
-	dirs := make(map[string]bool)
-	for _, e := range lock.Skills {
-		dirs[path.Dir(e.Target)] = true
+// orderAgents devolve os agents na ordem canônica de AllAgents — o relatório e
+// o lock ficam determinísticos independentemente da ordem marcada na seleção.
+func orderAgents(agents []string) []string {
+	set := make(map[string]bool, len(agents))
+	for _, a := range agents {
+		set[a] = true
 	}
-	if len(dirs) > 1 {
-		list := make([]string, 0, len(dirs))
-		for d := range dirs {
-			list = append(list, d)
-		}
-		sort.Strings(list)
-		return "", fmt.Errorf("lock contém skills em múltiplos diretórios (%v); sem orotools.yaml, use --agent", list)
-	}
-	for dir := range dirs {
-		for _, agent := range []string{"opencode", "cursor", "claude-code", "codex", "copilot"} {
-			if d, _ := skill.SkillsDir(agent); d == dir {
-				return agent, nil
-			}
+	ordered := make([]string, 0, len(agents))
+	for _, a := range skill.AllAgents {
+		if set[a] {
+			ordered = append(ordered, a)
 		}
 	}
-	return "", fmt.Errorf("não foi possível identificar o agent pelos targets do lock; use --agent")
+	return ordered
+}
+
+// agentDirs maps agent ids to their skills directories for display.
+func agentDirs(agents []string) []string {
+	dirs := make([]string, 0, len(agents))
+	for _, a := range agents {
+		if d, err := skill.SkillsDir(a); err == nil {
+			dirs = append(dirs, d)
+		}
+	}
+	return dirs
 }
 
 // runSkills implements `oro skills`: shows installed skills, migrates legacy
@@ -227,15 +240,29 @@ func runSkills(opts skillsOptions) error {
 	out := opts.out
 	status := ui.NewStatus(out)
 
+	// A seleção de agents só existe com terminal: sem stdin interativo a
+	// ambiguidade permanece o erro acionável de hoje (skills-multi-agent FR-5).
+	pickAgents := opts.pickAgents
+	if pickAgents == nil && isInteractiveStdin(opts) {
+		pickAgents = defaultPickAgents(opts)
+	}
 	ctx, err := loadSkillsContext(contextOptions{
 		manifestPath:     opts.manifestPath,
 		manifestExplicit: opts.manifestExplicit,
 		agentFlag:        opts.agentFlag,
 		interactive:      true,
-		pickAgent:        opts.pickAgent,
+		pickAgents:       pickAgents,
 	})
 	if err != nil {
+		if errors.Is(err, errPickerCancel) {
+			status.Info("cancelado")
+			return nil
+		}
 		return fmt.Errorf("skills: %w", err)
+	}
+	agents := ctx.agents
+	if len(agents) == 0 {
+		agents = []string{ctx.svc.Agent}
 	}
 	svc, lock := ctx.svc, ctx.lock
 	if ctx.agentNote != "" {
@@ -284,7 +311,9 @@ func runSkills(opts skillsOptions) error {
 	candidates := append(append([]skill.Candidate(nil), bundled...), remote...)
 	available := make([]skill.Candidate, 0, len(candidates))
 	for _, cand := range candidates {
-		if _, installed := lock.Lookup(cand.ID); !installed {
+		// Multi-agent: a skill é ofertada enquanto falta em pelo menos um dos
+		// agents de destino; os que já a têm caem em "já instalada" (FR-9).
+		if !installedInAllAgents(lock, agents, cand) {
 			available = append(available, cand)
 		}
 	}
@@ -339,17 +368,23 @@ func runSkills(opts skillsOptions) error {
 			failures = append(failures, fmt.Sprintf("%s: candidata não encontrada", id))
 			continue
 		}
-		res, err := svc.Install(ctx.m, lock, cand)
-		switch {
-		case err != nil:
-			status.Error(fmt.Sprintf("%s: %v", cand.Name, err))
-			failures = append(failures, cand.ID)
-		case res.Already:
-			status.Info(fmt.Sprintf("%s %s já instalada (conteúdo idêntico)", res.Name, res.Version))
-			installedCount++
-		default:
-			status.Success(fmt.Sprintf("%s %s instalada em %s", res.Name, res.Version, res.Target))
-			installedCount++
+		// Um par (skill × agent) por instalação, best-effort: a falha em um
+		// destino não aborta os demais (FR-7/FR-8).
+		for _, agent := range agents {
+			svcAgent := svc
+			svcAgent.Agent = agent
+			res, err := svcAgent.Install(ctx.m, lock, cand)
+			switch {
+			case err != nil:
+				status.Error(fmt.Sprintf("%s: %v", cand.Name, err))
+				failures = append(failures, cand.ID+"@"+agent)
+			case res.Already:
+				status.Info(fmt.Sprintf("%s %s já instalada em %s (conteúdo idêntico)", res.Name, res.Version, res.Target))
+				installedCount++
+			default:
+				status.Success(fmt.Sprintf("%s %s instalada em %s", res.Name, res.Version, res.Target))
+				installedCount++
+			}
 		}
 	}
 	if len(failures) > 0 {
@@ -357,6 +392,21 @@ func runSkills(opts skillsOptions) error {
 	}
 	status.Success(fmt.Sprintf("%d skill(s) instalada(s).", installedCount))
 	return nil
+}
+
+// installedInAllAgents reports whether the candidate is registered in the lock
+// at the target of every destination agent.
+func installedInAllAgents(lock *skill.Lock, agents []string, cand skill.Candidate) bool {
+	for _, agent := range agents {
+		dir, err := skill.SkillsDir(agent)
+		if err != nil {
+			return false
+		}
+		if _, ok := lock.LookupTarget(cand.ID, path.Join(dir, cand.Name)); !ok {
+			return false
+		}
+	}
+	return true
 }
 
 func loadBundledCatalog(opts skillsOptions, m *manifest.Manifest) ([]skill.Candidate, error) {
@@ -398,14 +448,24 @@ func loadRemoteCatalog(opts skillsOptions) ([]skill.Candidate, []skill.Warning, 
 	return cands, warns, snap.Cleanup, err
 }
 
-// renderInstalled prints the installed skills from the lock (FR-11).
+// renderInstalled prints the installed skills from the lock (FR-11). With
+// skills on more than one agent the target directory disambiguates the lines
+// (skills-multi-agent FR-13).
 func renderInstalled(out io.Writer, lock *skill.Lock) {
 	if len(lock.Skills) == 0 {
 		return
 	}
+	dirs := make(map[string]bool)
+	for _, e := range lock.Skills {
+		dirs[path.Dir(e.Target)] = true
+	}
 	fmt.Fprintln(out, "Skills já instaladas")
 	marker := listMarker(out)
 	for _, e := range lock.Skills {
+		if len(dirs) > 1 {
+			fmt.Fprintf(out, "  %c %-28s %-8s %-22s %s\n", marker, e.Name, e.Version, e.Target, sourceLabel(e.Source, e.SourceRef))
+			continue
+		}
 		fmt.Fprintf(out, "  %c %-28s %-8s %s\n", marker, e.Name, e.Version, sourceLabel(e.Source, e.SourceRef))
 	}
 	fmt.Fprintln(out)
@@ -598,6 +658,62 @@ func (huhSkillSelector) Select(title string, options []skillOption) ([]string, e
 		Options(huhOpts...).
 		Value(&selected)
 	if err := newOroForm(huh.NewGroup(field)).Run(); err != nil {
+		return nil, err
+	}
+	return selected, nil
+}
+
+// defaultPickAgents resolves the production agent picker: full-screen TUI when
+// the output is a terminal, huh wizard otherwise — the same rule as
+// selectSkills.
+func defaultPickAgents(opts skillsOptions) func(candidates []string) ([]string, error) {
+	return func(candidates []string) ([]string, error) {
+		choices := make([]agentChoice, 0, len(candidates))
+		for _, id := range candidates {
+			dir, _ := skill.SkillsDir(id)
+			choices = append(choices, agentChoice{id: id, dir: dir})
+		}
+		var sel agentSelector = huhAgentSelector{}
+		if ui.IsTTY(opts.out) {
+			sel = tuiAgentSelector{}
+		}
+		return sel.Select("Selecione os agents de destino", choices)
+	}
+}
+
+// agentSelector asks for one or more destination agents.
+type agentSelector interface {
+	Select(title string, choices []agentChoice) ([]string, error)
+}
+
+// huhAgentSelector is the agent picker fallback when the output is not a
+// terminal; enter without a selection re-prompts (FR-2).
+type huhAgentSelector struct{}
+
+func (huhAgentSelector) Select(title string, choices []agentChoice) ([]string, error) {
+	huhOpts := make([]huh.Option[string], 0, len(choices))
+	for _, c := range choices {
+		label := c.id
+		if c.dir != "" {
+			label = fmt.Sprintf("%s (%s)", c.id, c.dir)
+		}
+		huhOpts = append(huhOpts, huh.NewOption(label, c.id))
+	}
+	var selected []string
+	field := huh.NewMultiSelect[string]().
+		Title(title).
+		Options(huhOpts...).
+		Value(&selected).
+		Validate(func(v []string) error {
+			if len(v) == 0 {
+				return errors.New("selecione ao menos um agent")
+			}
+			return nil
+		})
+	if err := newOroForm(huh.NewGroup(field)).Run(); err != nil {
+		if errors.Is(err, huh.ErrUserAborted) {
+			return nil, errPickerCancel
+		}
 		return nil, err
 	}
 	return selected, nil

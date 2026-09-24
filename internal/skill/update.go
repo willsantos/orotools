@@ -3,6 +3,7 @@ package skill
 import (
 	"fmt"
 	"os"
+	"path"
 
 	"github.com/Masterminds/semver/v3"
 
@@ -114,9 +115,23 @@ func (s Service) Update(m *manifest.Manifest, lock *Lock, in UpdateInput, opts U
 func (s Service) updateOne(m *manifest.Manifest, lock *Lock, entry LockEntry, byID map[string]Candidate, opts UpdateOptions) UpdateResult {
 	res := UpdateResult{ID: entry.ID, Name: entry.Name, From: entry.Version}
 
+	// Ad-hoc (sem manifest): o agent vem do target de cada entrada — o lock
+	// pode misturar diretórios de vários agents (skills-multi-agent FR-14).
+	// Com manifest, o agent segue ai.agent e a divergência bloqueia (FR-26).
+	svc := s
+	if m == nil {
+		agent, err := AgentFromSkillsDir(path.Dir(entry.Target))
+		if err != nil {
+			res.Decision = UpdateBlocked
+			res.Detail = fmt.Sprintf("target do lock não mapeia um agent conhecido: %v", err)
+			return res
+		}
+		svc.Agent = agent
+	}
+
 	// FR-26: an agent change moves the derived target; never move or duplicate
 	// installed skills between agents in this feature.
-	targetRel, err := s.TargetFor(entry.Name)
+	targetRel, err := svc.TargetFor(entry.Name)
 	if err != nil {
 		res.Decision = UpdateBlocked
 		res.Detail = fmt.Sprintf("agent inválido: %v", err)
@@ -124,7 +139,11 @@ func (s Service) updateOne(m *manifest.Manifest, lock *Lock, entry LockEntry, by
 	}
 	if targetRel != entry.Target {
 		res.Decision = UpdateBlocked
-		res.Detail = fmt.Sprintf("manifest.ai.agent mudou; destino seria %s, mas a skill vive em %s (migração entre agents não é suportada)", targetRel, entry.Target)
+		if m == nil {
+			res.Detail = fmt.Sprintf("destino divergente; a skill vive em %s, mas o destino do agent do target seria %s (migração entre agents não é suportada)", entry.Target, targetRel)
+		} else {
+			res.Detail = fmt.Sprintf("manifest.ai.agent mudou; destino seria %s, mas a skill vive em %s (migração entre agents não é suportada)", targetRel, entry.Target)
+		}
 		return res
 	}
 
@@ -208,7 +227,7 @@ func (s Service) updateOne(m *manifest.Manifest, lock *Lock, entry LockEntry, by
 		if opts.DryRun {
 			return res
 		}
-		if err := s.applyUpdate(m, lock, cand, entry); err != nil {
+		if err := svc.applyUpdate(m, lock, cand, entry); err != nil {
 			res.Decision = UpdateFailed
 			res.To = ""
 			res.Detail = err.Error()
@@ -231,7 +250,7 @@ func (s Service) updateOne(m *manifest.Manifest, lock *Lock, entry LockEntry, by
 	if opts.DryRun {
 		return res
 	}
-	if err := s.applyUpdate(m, lock, cand, entry); err != nil {
+	if err := svc.applyUpdate(m, lock, cand, entry); err != nil {
 		res.Decision = UpdateFailed
 		res.To = ""
 		res.Detail = err.Error()

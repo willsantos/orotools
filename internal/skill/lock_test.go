@@ -170,3 +170,96 @@ func dupEntry() string {
       content_sha256: sha256:bb
 `
 }
+
+// Multi-agent (skills-multi-agent FR-11/FR-12): a mesma skill em agents
+// distintos são entradas distintas; o par (id, target) é que precisa ser único.
+func TestLockMultiAgentSameIDDistinctTargets(t *testing.T) {
+	lock := skill.NewLock()
+	mk := func(target string) skill.LockEntry {
+		return skill.LockEntry{ID: "github:willsantos/skills_AI/a", Name: "a", Source: "github",
+			SourceRef: "willsantos/skills_AI", Path: "a", Version: "1.0.0",
+			Target: target, ContentSHA256: "sha256:x"}
+	}
+	lock.Upsert(mk(".codex/skills/a"))
+	lock.Upsert(mk(".opencode/skills/a"))
+	if len(lock.Skills) != 2 {
+		t.Fatalf("entries = %d, want 2 (uma por agent)", len(lock.Skills))
+	}
+	// Ordenação por (id, target): .codex antes de .opencode.
+	if lock.Skills[0].Target != ".codex/skills/a" || lock.Skills[1].Target != ".opencode/skills/a" {
+		t.Errorf("ordem por (id, target) incorreta: %+v", lock.Skills)
+	}
+	// Upsert substitui apenas o par correspondente.
+	upd := mk(".codex/skills/a")
+	upd.Version = "2.0.0"
+	lock.Upsert(upd)
+	if len(lock.Skills) != 2 {
+		t.Fatalf("upsert multi-agent criou entrada: %+v", lock.Skills)
+	}
+	if e, _ := lock.LookupTarget("github:willsantos/skills_AI/a", ".codex/skills/a"); e.Version != "2.0.0" {
+		t.Errorf("LookupTarget .codex = %+v", e)
+	}
+	if e, ok := lock.LookupTarget("github:willsantos/skills_AI/a", ".cursor/skills/a"); ok {
+		t.Errorf("LookupTarget de target inexistente devolveu %+v", e)
+	}
+
+	// Round-trip preserva as duas entradas.
+	dir := t.TempDir()
+	path := filepath.Join(dir, skill.LockDir, skill.LockFilename)
+	if err := lock.Save(path); err != nil {
+		t.Fatal(err)
+	}
+	reloaded, err := skill.ReadLock(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(reloaded.Skills) != 2 {
+		t.Fatalf("lock recarregado = %d entradas, want 2", len(reloaded.Skills))
+	}
+}
+
+func TestParseLockRejectsDuplicateIDTargetPair(t *testing.T) {
+	valid := `version: 1
+skills:
+    - id: recipe:r/a
+      name: a
+      source: recipe
+      source_ref: r
+      path: a
+      version: 1.0.0
+      target: .opencode/skills/a
+      content_sha256: sha256:aa
+`
+	if _, err := skill.ParseLock([]byte(valid + "    - " + dupEntry())); err == nil {
+		t.Fatal("par id/target duplicado deveria ser rejeitado")
+	}
+	// Mesmo id em target distinto é válido.
+	other := `    - id: recipe:r/a
+      name: a
+      source: recipe
+      source_ref: r
+      path: a
+      version: 1.0.0
+      target: .codex/skills/a
+      content_sha256: sha256:bb
+`
+	if _, err := skill.ParseLock([]byte(valid + other)); err != nil {
+		t.Fatalf("mesmo id em targets distintos deveria ser aceito: %v", err)
+	}
+}
+
+func TestAgentFromSkillsDir(t *testing.T) {
+	for _, agent := range skill.AllAgents {
+		dir, err := skill.SkillsDir(agent)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got, err := skill.AgentFromSkillsDir(dir)
+		if err != nil || got != agent {
+			t.Errorf("AgentFromSkillsDir(%q) = %q, %v; want %q", dir, got, err, agent)
+		}
+	}
+	if _, err := skill.AgentFromSkillsDir(".windsurf/skills"); err == nil {
+		t.Error("diretório desconhecido deveria falhar")
+	}
+}

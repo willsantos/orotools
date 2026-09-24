@@ -623,7 +623,9 @@ func TestRunSkillsAdHocNoDirDefaultsOpencode(t *testing.T) {
 	}
 }
 
-func TestRunSkillsAdHocMultipleDirsAskOrError(t *testing.T) {
+// skills-multi-agent FR-1/FR-7: ambiguidade abre a seleção multi-agente; as
+// skills escolhidas instalam em todos os agents marcados.
+func TestRunSkillsAdHocMultipleDirsMultiSelect(t *testing.T) {
 	base := t.TempDir()
 	for _, dir := range []string{".cursor/skills", ".codex/skills"} {
 		if err := os.MkdirAll(filepath.Join(base, dir), 0o755); err != nil {
@@ -634,7 +636,7 @@ func TestRunSkillsAdHocMultipleDirsAskOrError(t *testing.T) {
 	sel := &fakeSelector{ids: []string{remote[0].ID}}
 	var out, errOut bytes.Buffer
 	tty := true
-	picked := ""
+	var picked []string
 	err := runSkills(skillsOptions{
 		manifestPath: filepath.Join(base, "orotools.yaml"),
 		out:          &out,
@@ -643,22 +645,39 @@ func TestRunSkillsAdHocMultipleDirsAskOrError(t *testing.T) {
 		stdinTTY:     &tty,
 		selector:     sel,
 		loadGitHub:   fakeLoadGitHub(remote, nil),
-		pickAgent: func(candidates []string) (string, error) {
-			picked = strings.Join(candidates, ",")
-			return "codex", nil
+		pickAgents: func(candidates []string) ([]string, error) {
+			picked = candidates
+			return []string{"codex", "cursor"}, nil
 		},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if picked != "cursor,codex" {
-		t.Errorf("pickAgent candidates = %q", picked)
+	if strings.Join(picked, ",") != "cursor,codex" {
+		t.Errorf("pickAgents candidates = %v", picked)
 	}
-	if _, err := os.Stat(filepath.Join(base, ".codex", "skills", "local-pr-review", "SKILL.md")); err != nil {
-		t.Errorf("skill not installed in the chosen agent dir: %v", err)
+	// Instalou nos dois destinos com um único lock.
+	for _, dir := range []string{".cursor", ".codex"} {
+		if _, err := os.Stat(filepath.Join(base, dir, "skills", "local-pr-review", "SKILL.md")); err != nil {
+			t.Errorf("skill ausente em %s: %v", dir, err)
+		}
+	}
+	lock, err := skill.ReadLock(filepath.Join(base, ".orotools", "skills.lock.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(lock.Skills) != 2 {
+		t.Fatalf("lock = %+v, want 2 entradas (uma por agent)", lock.Skills)
+	}
+	if !strings.Contains(out.String(), "instalada em .cursor/skills/local-pr-review") ||
+		!strings.Contains(out.String(), "instalada em .codex/skills/local-pr-review") {
+		t.Errorf("output missing per-agent install lines: %s", out.String())
 	}
 
-	// Without a picker, ambiguity is an actionable error.
+	// Rerun com os dois marcados: nada é ofertado (FR-9 — já presentes em
+	// todos os agents de destino).
+	out.Reset()
+	sel = &fakeSelector{ids: []string{"should-not-be-asked"}}
 	err = runSkills(skillsOptions{
 		manifestPath: filepath.Join(base, "orotools.yaml"),
 		out:          &out,
@@ -667,9 +686,135 @@ func TestRunSkillsAdHocMultipleDirsAskOrError(t *testing.T) {
 		stdinTTY:     &tty,
 		selector:     sel,
 		loadGitHub:   fakeLoadGitHub(remote, nil),
+		pickAgents: func([]string) ([]string, error) {
+			return []string{"cursor", "codex"}, nil
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(sel.gotOptions) != 0 {
+		t.Errorf("skill presente nos dois agents foi ofertada: %+v", sel.gotOptions)
+	}
+
+	// Segunda skill instalada só no cursor (run com um agent marcado).
+	arch := wizardCandidate(t, "github:willsantos/skills_AI/architecture", "architecture", "github", "willsantos/skills_AI", "1.0.0")
+	sel = &fakeSelector{ids: []string{arch.ID}}
+	err = runSkills(skillsOptions{
+		manifestPath: filepath.Join(base, "orotools.yaml"),
+		out:          &out,
+		errOut:       &errOut,
+		stdin:        bytes.NewReader(nil),
+		stdinTTY:     &tty,
+		selector:     sel,
+		loadGitHub:   fakeLoadGitHub(append(remote, arch), nil),
+		pickAgents: func([]string) ([]string, error) {
+			return []string{"cursor"}, nil
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Marcando os dois agents, a architecture é ofertada (falta no codex) e
+	// o cursor cai em "já instalada" (FR-8).
+	out.Reset()
+	err = runSkills(skillsOptions{
+		manifestPath: filepath.Join(base, "orotools.yaml"),
+		out:          &out,
+		errOut:       &errOut,
+		stdin:        bytes.NewReader(nil),
+		stdinTTY:     &tty,
+		selector:     sel,
+		loadGitHub:   fakeLoadGitHub(append(remote, arch), nil),
+		pickAgents: func([]string) ([]string, error) {
+			return []string{"cursor", "codex"}, nil
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), "instalada em .codex/skills/architecture") {
+		t.Errorf("output missing codex install line: %s", out.String())
+	}
+	if !strings.Contains(out.String(), "já instalada em .cursor/skills/architecture") {
+		t.Errorf("output missing cursor already-installed line: %s", out.String())
+	}
+	lock, err = skill.ReadLock(filepath.Join(base, ".orotools", "skills.lock.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// lpr nos 2 agents + architecture nos 2 agents (uma entrada por destino).
+	if len(lock.Skills) != 4 {
+		t.Fatalf("lock = %+v, want 4 entradas", lock.Skills)
+	}
+}
+
+// skills-multi-agent FR-8: o cancelamento na seleção de agents sai limpo
+// ("cancelado", sem erro), como no picker de skills.
+func TestRunSkillsAdHocAgentCancelIsGraceful(t *testing.T) {
+	base := t.TempDir()
+	for _, dir := range []string{".cursor/skills", ".codex/skills"} {
+		if err := os.MkdirAll(filepath.Join(base, dir), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	remote := []skill.Candidate{wizardCandidate(t, "github:willsantos/skills_AI/local-pr-review", "local-pr-review", "github", "willsantos/skills_AI", "1.0.0")}
+	var out, errOut bytes.Buffer
+	tty := true
+	err := runSkills(skillsOptions{
+		manifestPath: filepath.Join(base, "orotools.yaml"),
+		out:          &out,
+		errOut:       &errOut,
+		stdin:        bytes.NewReader(nil),
+		stdinTTY:     &tty,
+		loadGitHub:   fakeLoadGitHub(remote, nil),
+		pickAgents: func([]string) ([]string, error) {
+			return nil, errPickerCancel
+		},
+	})
+	if err != nil {
+		t.Fatalf("cancel should not fail: %v", err)
+	}
+	if !strings.Contains(out.String(), "cancelado") {
+		t.Errorf("output missing cancel message: %s", out.String())
+	}
+	if _, err := os.Stat(filepath.Join(base, ".orotools", "skills.lock.yaml")); !os.IsNotExist(err) {
+		t.Error("cancel created a lock")
+	}
+}
+
+// skills-multi-agent FR-5: sem stdin interativo, a ambiguidade permanece o
+// erro acionável de hoje; nenhuma seleção é tentada.
+func TestRunSkillsAdHocMultipleDirsNonInteractiveErrors(t *testing.T) {
+	base := t.TempDir()
+	for _, dir := range []string{".cursor/skills", ".codex/skills"} {
+		if err := os.MkdirAll(filepath.Join(base, dir), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	remote := []skill.Candidate{wizardCandidate(t, "github:willsantos/skills_AI/local-pr-review", "local-pr-review", "github", "willsantos/skills_AI", "1.0.0")}
+	var out, errOut bytes.Buffer
+	tty := false
+	err := runSkills(skillsOptions{
+		manifestPath: filepath.Join(base, "orotools.yaml"),
+		out:          &out,
+		errOut:       &errOut,
+		stdin:        bytes.NewReader(nil),
+		stdinTTY:     &tty,
+		loadGitHub:   fakeLoadGitHub(remote, nil),
 	})
 	if err == nil || !strings.Contains(err.Error(), "--agent") {
 		t.Errorf("err = %v, want ambiguity error hinting --agent", err)
+	}
+}
+
+// skills-multi-agent: a seleção respeita a ordem canônica dos agents.
+func TestOrderAgents(t *testing.T) {
+	got := orderAgents([]string{"codex", "opencode", "copilot"})
+	want := "opencode,codex,copilot"
+	if strings.Join(got, ",") != want {
+		t.Errorf("orderAgents = %v, want %s", got, want)
 	}
 }
 
@@ -767,24 +912,87 @@ func TestRunSkillsUpdateAdHocDerivesAgentFromLock(t *testing.T) {
 	}
 }
 
-func TestRunSkillsUpdateAdHocMixedAgentsError(t *testing.T) {
+// skills-multi-agent FR-14: o update ad-hoc processa lock com agents mistos,
+// derivando o agent de cada entrada pelo próprio target.
+func TestRunSkillsUpdateAdHocMixedAgentsPerEntry(t *testing.T) {
 	base := t.TempDir()
 	lock := skill.NewLock()
-	for target, id := range map[string]string{
-		".claude/skills/a": "github:willsantos/skills_AI/a",
-		".codex/skills/b":  "github:willsantos/skills_AI/b",
+	for _, tc := range []struct{ dir, name string }{
+		{".claude/skills", "a"},
+		{".codex/skills", "b"},
 	} {
+		dest := filepath.Join(base, tc.dir, tc.name)
+		if err := os.MkdirAll(dest, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dest, "SKILL.md"), []byte("---\nname: "+tc.name+"\ndescription: old\nmetadata:\n  version: \"1.0.0\"\n---\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
 		lock.Upsert(skill.LockEntry{
-			ID: id, Name: filepath.Base(target), Source: "github", SourceRef: "willsantos/skills_AI",
-			Path: filepath.Base(target), Version: "1.0.0", Target: target, ContentSHA256: "sha256:00",
+			ID: "github:willsantos/skills_AI/" + tc.name, Name: tc.name,
+			Source: "github", SourceRef: "willsantos/skills_AI", Path: tc.name,
+			Version: "1.0.0", Revision: "aaa", Target: tc.dir + "/" + tc.name,
+			ContentSHA256: mustDigestOf(t, dest),
 		})
 	}
 	if err := lock.Save(filepath.Join(base, ".orotools", "skills.lock.yaml")); err != nil {
 		t.Fatal(err)
 	}
-	_, err := runUpdateFixtureAt(t, base, nil, nil, nil, false, false)
-	if err == nil || !strings.Contains(err.Error(), "múltiplos diretórios") {
-		t.Errorf("err = %v, want mixed-agents error", err)
+
+	upA := wizardCandidate(t, "github:willsantos/skills_AI/a", "a", "github", "willsantos/skills_AI", "1.1.0")
+	upB := wizardCandidate(t, "github:willsantos/skills_AI/b", "b", "github", "willsantos/skills_AI", "1.1.0")
+	out, err := runUpdateFixtureAt(t, base, nil, []skill.Candidate{upA, upB}, nil, false, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Count(out, "1.0.0 → 1.1.0") != 2 {
+		t.Errorf("report missing per-agent updates: %s", out)
+	}
+	lockOnDisk, err := skill.ReadLock(filepath.Join(base, ".orotools", "skills.lock.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, target := range []string{".claude/skills/a", ".codex/skills/b"} {
+		e, _ := lockOnDisk.LookupTarget("github:willsantos/skills_AI/"+filepath.Base(target), target)
+		if e.Version != "1.1.0" {
+			t.Errorf("%s version = %s, want 1.1.0", target, e.Version)
+		}
+	}
+}
+
+// skills-multi-agent FR-16: --agent no update ad-hoc com lock não vazio não
+// altera o processamento; apenas emite nota informativa.
+func TestRunSkillsUpdateAdHocAgentFlagNoted(t *testing.T) {
+	base := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(base, ".claude", "skills", "local-pr-review"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(base, ".claude", "skills", "local-pr-review", "SKILL.md"), []byte("---\nname: local-pr-review\ndescription: old\nmetadata:\n  version: \"1.0.0\"\n---\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	lock := skill.NewLock()
+	lock.Upsert(skill.LockEntry{
+		ID: "github:willsantos/skills_AI/local-pr-review", Name: "local-pr-review",
+		Source: "github", SourceRef: "willsantos/skills_AI", Path: "local-pr-review",
+		Version: "1.0.0", Target: ".claude/skills/local-pr-review",
+		ContentSHA256: mustDigestOf(t, filepath.Join(base, ".claude", "skills", "local-pr-review")),
+	})
+	if err := lock.Save(filepath.Join(base, ".orotools", "skills.lock.yaml")); err != nil {
+		t.Fatal(err)
+	}
+
+	var out, errOut bytes.Buffer
+	err := runSkillsUpdate(skillsUpdateOptions{
+		manifestPath: filepath.Join(base, "orotools.yaml"),
+		agentFlag:    "codex",
+		out:          &out,
+		errOut:       &errOut,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), "agents dos targets do lock") {
+		t.Errorf("output missing --agent note: %s", out.String())
 	}
 }
 

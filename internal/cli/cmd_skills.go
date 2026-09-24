@@ -18,8 +18,9 @@ reinstaladas. O estado instalado fica em .orotools/skills.lock.yaml.
 Para atualizar tudo que está gerenciado, use "oro skills update".
 
 Fora de um projeto Oro (sem orotools.yaml) o wizard funciona em
-modo ad-hoc: instala apenas do catálogo skills_AI e detecta o
-destino pelas pastas de skills existentes (ou --agent).`,
+modo ad-hoc: instala apenas do catálogo skills_AI e escolhe o
+destino por --agent, pela pasta de skills existente ou pela
+seleção de agents — as skills instalam em todos os marcados.`,
 		Args:         cobra.NoArgs,
 		SilenceUsage: true,
 		RunE: func(cmd *cobra.Command, args []string) error {

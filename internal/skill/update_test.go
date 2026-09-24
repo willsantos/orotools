@@ -210,9 +210,11 @@ func TestUpdateMissingFromCatalogKeepsDestination(t *testing.T) {
 
 func TestUpdateAgentMismatchBlocks(t *testing.T) {
 	svc, lock := installForUpdate(t)
-	// Change the agent: the derived target no longer matches the lock.
+	// Com manifest, o agent vem de ai.agent: a divergência entre o destino
+	// derivado e o target do lock bloqueia (FR-26).
 	svc.Agent = "cursor"
-	report, err := svc.Update(nil, lock, skill.UpdateInput{Bundled: []skill.Candidate{bundledWithVersion(t, "1.1.0")}}, skill.UpdateOptions{})
+	m := &manifest.Manifest{Version: 1, Project: manifest.ProjectRef{Name: "demo"}, AI: manifest.AIRef{Agent: "cursor"}}
+	report, err := svc.Update(m, lock, skill.UpdateInput{Bundled: []skill.Candidate{bundledWithVersion(t, "1.1.0")}}, skill.UpdateOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -221,6 +223,28 @@ func TestUpdateAgentMismatchBlocks(t *testing.T) {
 	}
 	if !strings.Contains(report.Results[0].Detail, "agent") {
 		t.Errorf("detail = %q", report.Results[0].Detail)
+	}
+}
+
+// skills-multi-agent FR-14: ad-hoc (manifest ausente), o agent de cada entrada
+// vem do próprio target — svc.Agent é ignorado e a skill atualiza no diretório
+// onde vive.
+func TestUpdateAdHocDerivesAgentPerEntry(t *testing.T) {
+	svc, lock := installForUpdate(t)
+	svc.Agent = "cursor" // seria outro diretório; deve ser ignorado no ad-hoc
+	report, err := svc.Update(nil, lock, skill.UpdateInput{Bundled: []skill.Candidate{bundledWithVersion(t, "1.1.0")}}, skill.UpdateOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.Updated != 1 || report.Blocked != 0 {
+		t.Fatalf("report = %+v", report)
+	}
+	data, err := os.ReadFile(filepath.Join(svc.Base, ".opencode", "skills", "code-review", "SKILL.md"))
+	if err != nil || !strings.Contains(string(data), "1.1.0") {
+		t.Errorf("destino original não atualizado: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(svc.Base, ".cursor", "skills", "code-review")); !os.IsNotExist(err) {
+		t.Error("ad-hoc update criou destino no agent errado")
 	}
 }
 

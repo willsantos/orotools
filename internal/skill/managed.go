@@ -115,9 +115,9 @@ func (s Service) Install(m *manifest.Manifest, lock *Lock, cand Candidate) (Inst
 	destExists := pathExists(destAbs)
 	if destExists {
 		os.RemoveAll(staging)
-		entry, owned := lock.Lookup(cand.ID)
+		entry, owned := lock.LookupTarget(cand.ID, targetRel)
 		destDigest, digestErr := Digest(os.DirFS(s.Base), targetRel)
-		if owned && entry.Target == targetRel && digestErr == nil &&
+		if owned && digestErr == nil &&
 			destDigest == entry.ContentSHA256 && stagingDigest == entry.ContentSHA256 {
 			result.Already = true
 			return result, nil
@@ -287,7 +287,7 @@ func (s Service) persistState(mNext *manifest.Manifest, lockNext *Lock) error {
 // under every known agent skills directory. Only directories carrying the
 // internal prefixes are touched.
 func (s Service) CleanOrphans() {
-	for _, agent := range []string{"opencode", "cursor", "claude-code", "codex", "copilot"} {
+	for _, agent := range AllAgents {
 		skillsRel, err := SkillsDir(agent)
 		if err != nil {
 			continue
