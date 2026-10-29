@@ -580,8 +580,12 @@ func (m skillPicker) detailView() string {
 	title := " " + pickerName.Render(e.Name) + "  " +
 		pickerDim.Render(fmt.Sprintf("%s  ·  %s:%s", e.Version, e.Source, e.SourceRef))
 	id := " " + pickerDim.Render("id: "+e.ID)
+	target := " " + pickerDim.Render("destino: "+e.Target)
 	desc := " " + pickerDesc.Render(strings.Join(wrapText(e.Description, w-4), "\n"))
-	body := title + "\n" + id + "\n" + desc
+	body := title + "\n" + id + "\n" + target + "\n" + desc
+	if e.Conflict != "" {
+		body += "\n " + pickerTip.Render("conflito: "+e.Conflict)
+	}
 	return pickerBarBorder.Width(w).Render(body)
 }
 

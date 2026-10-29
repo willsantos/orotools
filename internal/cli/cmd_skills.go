@@ -33,14 +33,25 @@ seleção de agents — as skills instalam em todos os marcados.`,
 				out:              cmd.OutOrStdout(),
 				errOut:           cmd.ErrOrStderr(),
 				stdin:            cmd.InOrStdin(),
+				localRoots:       mustStringArray(cmd, "local-root"),
+				ctx:              cmd.Context(),
 			})
 		},
 	}
 	cmd.Flags().String("manifest", manifestFilename, "caminho para o orotools.yaml")
 	cmd.Flags().String("agent", "", "agent alvo no modo ad-hoc (sem orotools.yaml): opencode|cursor|claude-code|codex|copilot")
+	cmd.Flags().StringArray("local-root", nil, "checkout Git local autorizado para catálogo de skills (pode ser repetido)")
+	cmd.AddCommand(newSkillsListCmd())
+	cmd.AddCommand(newSkillsInspectCmd())
+	cmd.AddCommand(newSkillsInstallCmd())
 	cmd.AddCommand(newSkillsUpdateCmd())
 	cmd.AddCommand(newSkillsProcessCmd())
 	return cmd
+}
+
+func mustStringArray(cmd *cobra.Command, name string) []string {
+	values, _ := cmd.Flags().GetStringArray(name)
+	return values
 }
 
 func newSkillsUpdateCmd() *cobra.Command {

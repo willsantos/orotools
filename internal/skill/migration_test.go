@@ -81,6 +81,55 @@ func TestMigrateIntactBundledIsAdopted(t *testing.T) {
 	}
 }
 
+func TestMigrateBundledApprovedReturnsLockedPostState(t *testing.T) {
+	content := skillDoc("code-review", "Review guidelines", "1.0.0")
+	svc, cand, lock, _ := legacyProject(t, content)
+	before, err := svc.ProjectStateFingerprint()
+	if err != nil {
+		t.Fatal(err)
+	}
+	preview, _, err := svc.InspectBundledMigration(lock, []skill.Candidate{cand})
+	if err != nil {
+		t.Fatal(err)
+	}
+	results, post, err := svc.MigrateBundledApproved(lock, []skill.Candidate{cand}, before, preview)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 1 || results[0].State != skill.MigrationAdopted {
+		t.Fatalf("migration = %+v", results)
+	}
+	actual, err := svc.ProjectStateFingerprint()
+	if err != nil || post == "" || post != actual || post == before {
+		t.Fatalf("post fingerprint=%q actual=%q before=%q err=%v", post, actual, before, err)
+	}
+}
+
+func TestMigrateBundledApprovedRejectsExternalStateSincePreview(t *testing.T) {
+	svc, cand, lock, _ := legacyProject(t, "")
+	before, err := svc.ProjectStateFingerprint()
+	if err != nil {
+		t.Fatal(err)
+	}
+	preview, _, err := svc.InspectBundledMigration(lock, []skill.Candidate{cand})
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(svc.ManifestPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(svc.ManifestPath, append(data, []byte("\n# external\n")...), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := svc.MigrateBundledApproved(lock, []skill.Candidate{cand}, before, preview); err == nil {
+		t.Fatal("migration accepted project state changed after preview")
+	}
+	if _, err := os.Stat(svc.LockPath); !os.IsNotExist(err) {
+		t.Fatalf("rejected migration wrote lock: %v", err)
+	}
+}
+
 func TestMigrateMissingBundledIsNotRegistered(t *testing.T) {
 	svc, cand, lock, _ := legacyProject(t, "")
 	results, err := svc.MigrateBundled(lock, []skill.Candidate{cand})

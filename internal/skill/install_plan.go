@@ -168,7 +168,7 @@ func (s Service) ApplyPlannedInstallContext(ctx context.Context, m *manifest.Man
 		if err := ctx.Err(); err != nil {
 			return InstallResult{}, "", fmt.Errorf("apply install canceled: %w", err)
 		}
-		return InstallResult{ID: candidate.ID, Name: candidate.Name, Version: candidate.Version.String(), Target: plan.Target, Digest: plan.ContentDigest, Already: true}, "unchanged", nil
+		return InstallResult{ID: candidate.ID, Name: candidate.Name, Version: candidate.Version.String(), Target: plan.Target, Digest: plan.ContentDigest, Already: true, ProjectStateFingerprint: plan.StateFingerprint}, "unchanged", nil
 	}
 	if plan.Decision != "install" {
 		return InstallResult{}, plan.Decision, fmt.Errorf("install blocked: %s", plan.Reason)
@@ -185,6 +185,12 @@ func (s Service) ApplyPlannedInstallContext(ctx context.Context, m *manifest.Man
 	}
 	if m != nil && currentManifest != nil && m != currentManifest {
 		*m = *currentManifest
+	}
+	// Capture exact post-transaction state before releasing the project lock.
+	// Callers may trust only this returned fingerprint when chaining applies.
+	result.ProjectStateFingerprint, err = s.stateFingerprint()
+	if err != nil {
+		return InstallResult{}, "failed", fmt.Errorf("apply install: fingerprint post-state: %w", err)
 	}
 	return result, "installed", nil
 }

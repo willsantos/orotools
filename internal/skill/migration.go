@@ -52,37 +52,136 @@ type MigrationResult struct {
 // targets are only classified, never mutated. skills.external is out of scope
 // by construction: only bundled candidates reach this function.
 func (s Service) MigrateBundled(lock *Lock, cands []Candidate) ([]MigrationResult, error) {
-	if len(cands) == 0 {
-		return nil, nil
+	results, _, err := s.MigrateBundledApproved(lock, cands, "", nil)
+	return results, err
+}
+
+// MigrateBundledApproved performs only the migration preview already consented
+// to by caller. expectedFingerprint is checked under project lock before and
+// after recovery; approvedResults bind target classifications/digests to the
+// read-only preview. Returned fingerprint is captured before releasing lock.
+func (s Service) MigrateBundledApproved(lock *Lock, cands []Candidate, expectedFingerprint string, approvedResults []MigrationResult) ([]MigrationResult, string, error) {
+	if len(cands) == 0 && expectedFingerprint == "" {
+		return nil, "", nil
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	projectLock, err := AcquireProjectLock(ctx, s.Base)
 	if err != nil {
-		return nil, fmt.Errorf("migrate: project lock: %w", err)
+		return nil, "", fmt.Errorf("migrate: project lock: %w", err)
 	}
 	defer projectLock.Release()
+	if expectedFingerprint != "" {
+		fingerprint, fingerprintErr := s.stateFingerprint()
+		if fingerprintErr != nil {
+			return nil, "", fmt.Errorf("migrate: inspect expected project state: %w", fingerprintErr)
+		}
+		if fingerprint != expectedFingerprint {
+			return nil, "", fmt.Errorf("migrate: project state changed since preview")
+		}
+	}
 	if err := s.recoverTransaction(); err != nil {
-		return nil, fmt.Errorf("recover interrupted skill transaction: %w", err)
+		return nil, "", fmt.Errorf("recover interrupted skill transaction: %w", err)
+	}
+	if expectedFingerprint != "" {
+		fingerprint, fingerprintErr := s.stateFingerprint()
+		if fingerprintErr != nil {
+			return nil, "", fingerprintErr
+		}
+		if fingerprint != expectedFingerprint {
+			return nil, "", fmt.Errorf("migrate: recovery changed project state; create a new preview")
+		}
 	}
 	originalLock := lock
 	_, lock, err = s.reloadState(nil, lock)
 	if err != nil {
-		return nil, err
+		return nil, "", err
+	}
+	previewResults, _, err := s.InspectBundledMigration(lock, cands)
+	if err != nil {
+		return nil, "", err
+	}
+	if expectedFingerprint != "" && !sameMigrationPreview(previewResults, approvedResults) {
+		return nil, "", fmt.Errorf("migrate: bundled targets changed since preview; create a new preview")
 	}
 	results, err := s.migrateBundledUnlocked(lock, cands)
 	if err == nil && originalLock != nil && originalLock != lock {
 		*originalLock = *lock
 	}
-	return results, err
+	if err != nil {
+		return nil, "", err
+	}
+	fingerprint, err := s.stateFingerprint()
+	if err != nil {
+		return nil, "", fmt.Errorf("migrate: fingerprint post-state: %w", err)
+	}
+	return results, fingerprint, nil
+}
+
+func sameMigrationPreview(a, b []MigrationResult) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
 
 func (s Service) migrateBundledUnlocked(lock *Lock, cands []Candidate) ([]MigrationResult, error) {
+	results, projected, err := s.InspectBundledMigration(lock, cands)
+	if err != nil {
+		return nil, err
+	}
+	var adopted bool
+	for _, result := range results {
+		if result.State != MigrationAdopted {
+			continue
+		}
+		lock.Upsert(result.Entry)
+		adopted = true
+	}
+	if adopted {
+		// Keep the projected result as source of truth and persist only after
+		// caller has explicitly entered an operation that may mutate project state.
+		*lock = *projected
+		if err := lock.Save(s.LockPath); err != nil {
+			return nil, fmt.Errorf("migrate: persistir lock: %w", err)
+		}
+	}
+	return results, nil
+}
+
+// InspectBundledMigration classifies legacy bundled targets without creating
+// or rewriting the project lock. The returned projected lock includes intact
+// legacy targets so read-only previews can report them as installed.
+func (s Service) InspectBundledMigration(lock *Lock, cands []Candidate) ([]MigrationResult, *Lock, error) {
+	if lock == nil {
+		return nil, nil, fmt.Errorf("migrate: lock ausente")
+	}
+	if err := s.validateStatePaths(); err != nil {
+		return nil, nil, fmt.Errorf("migrate: unsafe state path: %w", err)
+	}
+	projected := cloneLock(lock)
+	results, err := s.inspectBundledUnlocked(lock, cands)
+	if err != nil {
+		return nil, nil, err
+	}
+	for _, result := range results {
+		if result.State == MigrationAdopted {
+			projected.Upsert(result.Entry)
+		}
+	}
+	return results, projected, nil
+}
+
+func (s Service) inspectBundledUnlocked(lock *Lock, cands []Candidate) ([]MigrationResult, error) {
 	if err := s.validateStatePaths(); err != nil {
 		return nil, fmt.Errorf("migrate: unsafe state path: %w", err)
 	}
 	results := make([]MigrationResult, 0, len(cands))
-	var adopted []MigrationResult
 	for _, cand := range cands {
 		if cand.Source != SourceRecipe {
 			return nil, fmt.Errorf("migrate %s: apenas skills bundled são migradas", cand.ID)
@@ -132,14 +231,7 @@ func (s Service) migrateBundledUnlocked(lock *Lock, cands []Candidate) ([]Migrat
 			ContentSHA256:   sourceDigest,
 			DigestAlgorithm: DigestAlgorithm,
 		}
-		lock.Upsert(res.Entry)
-		adopted = append(adopted, res)
 		results = append(results, res)
-	}
-	if len(adopted) > 0 {
-		if err := lock.Save(s.LockPath); err != nil {
-			return nil, fmt.Errorf("migrate: persistir lock: %w", err)
-		}
 	}
 	return results, nil
 }

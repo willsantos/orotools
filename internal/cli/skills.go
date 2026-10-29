@@ -30,6 +30,8 @@ type skillsOptions struct {
 	out              io.Writer
 	errOut           io.Writer
 	stdin            io.Reader
+	localRoots       []string
+	ctx              context.Context
 
 	// recipeCatalog overrides the bundled catalog built from the manifest
 	// recipe. loadGitHub overrides the remote catalog loader; it returns a
@@ -55,6 +57,8 @@ type skillOption struct {
 	Version     string
 	Source      string // recipe|github
 	SourceRef   string // recipe name or repo slug
+	Target      string
+	Conflict    string
 }
 
 // skillSelector asks the user to pick zero or more skills, returning the
@@ -237,6 +241,10 @@ func agentDirs(agents []string) []string {
 // (skills-manager FR-1, FR-11, FR-15, FR-16). Without an orotools.yaml it
 // runs in ad-hoc mode: GitHub catalog only, agent detected or chosen.
 func runSkills(opts skillsOptions) error {
+	operationCtx := opts.ctx
+	if operationCtx == nil {
+		operationCtx = context.Background()
+	}
 	out := opts.out
 	status := ui.NewStatus(out)
 
@@ -277,8 +285,6 @@ func runSkills(opts skillsOptions) error {
 	if !isInteractiveStdin(opts) {
 		return fmt.Errorf("skills: stdin não interativo; o wizard precisa de um terminal (use `oro skills update` para operação não interativa)")
 	}
-	svc.CleanOrphans()
-
 	// Bundled catalog only exists with a manifest; errors are fatal packaging
 	// problems (FR-7).
 	var bundled []skill.Candidate
@@ -290,30 +296,38 @@ func runSkills(opts skillsOptions) error {
 	}
 
 	// Remote catalog: degradation to warning keeps bundled usable (FR-10).
-	remote, remoteWarns, cleanupRemote, err := loadRemoteCatalog(opts)
+	remote, remoteWarns, cleanupRemote, err := loadRemoteCatalogContext(operationCtx, opts)
 	if cleanupRemote != nil {
 		defer cleanupRemote()
 	}
 	if err != nil {
 		status.Warn(fmt.Sprintf("catálogo %s indisponível: %v", skill.GitHubCatalogRef, err))
 	}
+	localCatalog, localErr := loadSourceCatalog(operationCtx, nil, sourceCommandOptions{localRoots: opts.localRoots}, false, false)
+	if localErr != nil {
+		return fmt.Errorf("skills: %w", localErr)
+	}
+	for _, warning := range localCatalog.warnings {
+		status.Warn(fmt.Sprintf("%s ignorada: %s", warning.SkillID, warning.Message))
+	}
 
-	// Lazy migration of legacy bundled skills (FR-20): adopts intact targets
-	// into the lock before classifying what is installed vs available.
+	// Classify legacy bundled targets without writing the lock. Persist adoption
+	// only after the user selects a skill, so cancellation stays side-effect free.
 	var migration []skill.MigrationResult
+	projectedLock := lock
 	if !ctx.adHoc {
-		migration, err = svc.MigrateBundled(lock, bundled)
+		migration, projectedLock, err = svc.InspectBundledMigration(lock, bundled)
 		if err != nil {
 			return fmt.Errorf("skills: %w", err)
 		}
 	}
 
-	candidates := append(append([]skill.Candidate(nil), bundled...), remote...)
+	candidates := append(append(append([]skill.Candidate(nil), bundled...), remote...), localCatalog.candidates...)
 	available := make([]skill.Candidate, 0, len(candidates))
 	for _, cand := range candidates {
 		// Multi-agent: a skill é ofertada enquanto falta em pelo menos um dos
 		// agents de destino; os que já a têm caem em "já instalada" (FR-9).
-		if !installedInAllAgents(lock, agents, cand) {
+		if !installedInAllAgents(projectedLock, agents, cand) {
 			available = append(available, cand)
 		}
 	}
@@ -323,27 +337,53 @@ func runSkills(opts skillsOptions) error {
 		status.Warn(fmt.Sprintf("%s ignorada: %s", w.SkillID, w.Message))
 	}
 
-	renderInstalled(out, lock)
+	renderInstalled(out, projectedLock)
 	renderUnmanaged(out, migration)
 
 	if len(available) == 0 {
 		status.Success("Todas as skills do catálogo já estão instaladas; nada a fazer.")
 		return nil
 	}
-	if dups := skill.DestinationCollisions(available); len(dups) > 0 {
-		return fmt.Errorf("skills: conflito de destino entre candidatas: %v", dups)
+	collisionNames := make(map[string][]string)
+	for _, cand := range available {
+		collisionNames[cand.Name] = append(collisionNames[cand.Name], cand.ID)
 	}
 
 	options := make([]skillOption, 0, len(available))
 	for _, cand := range available {
+		var targets []string
+		var conflict string
+		for _, agent := range agents {
+			targetService := svc
+			targetService.Agent = agent
+			plan, planErr := targetService.PlanInstall(lock, cand)
+			if planErr != nil {
+				conflict = appendReason(conflict, planErr.Error())
+				continue
+			}
+			targets = append(targets, plan.Target)
+			if plan.Decision == "blocked" {
+				conflict = appendReason(conflict, plan.Reason)
+			}
+		}
+		if len(collisionNames[cand.Name]) > 1 {
+			conflict = appendReason(conflict, "destination collision: "+strings.Join(collisionNames[cand.Name], ", "))
+		}
+		target := strings.Join(targets, ",")
+		label := fmt.Sprintf("%s %s %s — %s → %s", cand.Name, cand.Version.String(), sourceLabel(string(cand.Source), cand.SourceRef), cand.Description, target)
+		if conflict != "" {
+			label += " [CONFLICT: " + conflict + "]"
+		}
 		options = append(options, skillOption{
 			ID:          cand.ID,
 			Name:        cand.Name,
-			Label:       fmt.Sprintf("%s %s %s — %s", cand.Name, cand.Version.String(), sourceLabel(string(cand.Source), cand.SourceRef), cand.Description),
+			Label:       label,
 			Description: cand.Description,
 			Version:     cand.Version.String(),
 			Source:      string(cand.Source),
 			SourceRef:   cand.SourceRef,
+			Target:      target,
+			Conflict:    conflict,
 		})
 	}
 	selectedIDs, err := selectSkills(opts, "Selecione as skills para instalar", options)
@@ -355,12 +395,84 @@ func runSkills(opts skillsOptions) error {
 		status.Success("Nenhuma skill selecionada; nada a fazer.")
 		return nil
 	}
+	selectedCandidates := make([]skill.Candidate, 0, len(selectedIDs))
+	selectedNames := make(map[string]string)
+	for _, id := range selectedIDs {
+		cand, ok := candidateByID(candidates, id)
+		if !ok {
+			return fmt.Errorf("skills: candidata não encontrada: %s", id)
+		}
+		if other, exists := selectedNames[cand.Name]; exists {
+			return fmt.Errorf("skills: seleção conflita no destino %q entre %s e %s; nenhuma alteração aplicada", cand.Name, other, cand.ID)
+		}
+		selectedNames[cand.Name] = cand.ID
+		selectedCandidates = append(selectedCandidates, cand)
+	}
+	// Preflight every selected candidate × destination before any apply, so a
+	// blocked destination cannot leave a partially installed selection.
+	plans := make(map[string]map[string]skill.InstallPlan, len(selectedCandidates))
+	for _, cand := range selectedCandidates {
+		plans[cand.ID] = make(map[string]skill.InstallPlan, len(agents))
+		for _, agent := range agents {
+			targetService := svc
+			targetService.Agent = agent
+			plan, planErr := targetService.PlanInstall(lock, cand)
+			if planErr != nil {
+				return fmt.Errorf("skills: plan %s@%s: %w; nenhuma alteração aplicada", cand.ID, agent, planErr)
+			}
+			if plan.Decision == "blocked" {
+				return fmt.Errorf("skills: plano %s@%s bloqueado: %s; nenhuma alteração aplicada", cand.ID, agent, plan.Reason)
+			}
+			plans[cand.ID][agent] = plan
+		}
+	}
+	// Legacy adoption is itself a write. Defer it until the whole selected set
+	// passes destination preflight; cancellation and blocked plans stay inert.
+	if !ctx.adHoc {
+		approvedState := ""
+		for _, cand := range selectedCandidates {
+			for _, agent := range agents {
+				plan := plans[cand.ID][agent]
+				if approvedState == "" {
+					approvedState = plan.StateFingerprint
+				} else if plan.StateFingerprint != approvedState {
+					return fmt.Errorf("skills: project state changed during batch preview; re-run `oro skills` and confirm new plans")
+				}
+			}
+		}
+		_, postMigrationState, migrationErr := svc.MigrateBundledApproved(lock, bundled, approvedState, migration)
+		if migrationErr != nil {
+			return fmt.Errorf("skills: bundled migration requires a fresh preview: %w", migrationErr)
+		}
+		if postMigrationState == "" {
+			return fmt.Errorf("skills: migration engine returned no locked post-state fingerprint; stop without installing")
+		}
+		// Migration is an explicit, preview-bound transition. Fingerprint must
+		// equal migration engine's locked post-state; semantic plan fields must
+		// still match original user consent before refreshed tokens are used.
+		for _, cand := range selectedCandidates {
+			for _, agent := range agents {
+				targetService := svc
+				targetService.Agent = agent
+				plan, planErr := targetService.PlanInstall(lock, cand)
+				approved := plans[cand.ID][agent]
+				if planErr != nil {
+					return fmt.Errorf("skills: revalidar após migração %s@%s: %w", cand.ID, agent, planErr)
+				}
+				if plan.StateFingerprint != postMigrationState || !sameApprovedInstallPlan(plan, approved) {
+					return fmt.Errorf("skills: plano mudou durante migração %s@%s; re-run `oro skills` and confirm new plans", cand.ID, agent)
+				}
+				plans[cand.ID][agent] = plan
+			}
+		}
+	}
 	byID := make(map[string]skill.Candidate, len(candidates))
 	for _, cand := range candidates {
 		byID[cand.ID] = cand
 	}
 
 	installedCount := 0
+	expectedProjectState := ""
 	var failures []string
 	for _, id := range selectedIDs {
 		cand, ok := byID[id]
@@ -373,11 +485,28 @@ func runSkills(opts skillsOptions) error {
 		for _, agent := range agents {
 			svcAgent := svc
 			svcAgent.Agent = agent
-			res, err := svcAgent.Install(ctx.m, lock, cand)
+			plan := plans[cand.ID][agent]
+			if expectedProjectState != "" {
+				state, stateErr := svcAgent.ProjectStateFingerprint()
+				if stateErr != nil || state != expectedProjectState {
+					return fmt.Errorf("skills: project state changed outside this approved batch; stop without applying remaining skills; re-run `oro skills` to review and confirm a new plan")
+				}
+			}
+			expectedState := plan.StateFingerprint
+			if expectedProjectState != "" {
+				expectedState = expectedProjectState
+			}
+			res, err := applySkillInstallPlan(operationCtx, svcAgent, ctx.m, lock, cand, plan, localCatalog.localRoots[cand.SourceRef], expectedState)
+			if err == nil {
+				expectedProjectState = res.ProjectStateFingerprint
+				if expectedProjectState == "" {
+					return fmt.Errorf("skills: install engine returned no locked post-state fingerprint; stop remaining batch")
+				}
+			}
 			switch {
 			case err != nil:
 				status.Error(fmt.Sprintf("%s: %v", cand.Name, err))
-				failures = append(failures, cand.ID+"@"+agent)
+				failures = append(failures, fmt.Sprintf("%s@%s: %v", cand.ID, agent, err))
 			case res.Already:
 				status.Info(fmt.Sprintf("%s %s já instalada em %s (conteúdo idêntico)", res.Name, res.Version, res.Target))
 				installedCount++
@@ -388,7 +517,7 @@ func runSkills(opts skillsOptions) error {
 		}
 	}
 	if len(failures) > 0 {
-		return fmt.Errorf("skills: %d instalação(ões) falharam", len(failures))
+		return fmt.Errorf("skills: %d instalação(ões) falharam: %s", len(failures), strings.Join(failures, "; "))
 	}
 	status.Success(fmt.Sprintf("%d skill(s) instalada(s).", installedCount))
 	return nil
@@ -431,20 +560,24 @@ func loadBundledFromManifest(m *manifest.Manifest) ([]skill.Candidate, error) {
 }
 
 func loadRemoteCatalog(opts skillsOptions) ([]skill.Candidate, []skill.Warning, func(), error) {
+	return loadRemoteCatalogContext(context.Background(), opts)
+}
+
+func loadRemoteCatalogContext(ctx context.Context, opts skillsOptions) ([]skill.Candidate, []skill.Warning, func(), error) {
 	if opts.loadGitHub != nil {
-		return opts.loadGitHub(context.Background())
+		return opts.loadGitHub(ctx)
 	}
 	noCleanup := func() {}
 	client := skill.HTTPGitHubClient{Token: os.Getenv("GITHUB_TOKEN")}
-	rev, err := client.Resolve(context.Background())
+	rev, err := client.Resolve(ctx)
 	if err != nil {
 		return nil, nil, noCleanup, err
 	}
-	snap, err := client.Snapshot(context.Background(), rev)
+	snap, err := client.Snapshot(ctx, rev)
 	if err != nil {
 		return nil, nil, noCleanup, err
 	}
-	cands, warns, err := skill.GitHubCatalog{Snapshot: snap}.List(context.Background())
+	cands, warns, err := skill.GitHubCatalog{Snapshot: snap}.List(ctx)
 	return cands, warns, snap.Cleanup, err
 }
 

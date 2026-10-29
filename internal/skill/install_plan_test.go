@@ -51,6 +51,18 @@ func TestInstallPlanIsReadOnlyAndApplyRequiresFreshToken(t *testing.T) {
 	if err != nil || decision != "installed" || result.Digest != plan.ContentDigest {
 		t.Fatalf("ApplyPlannedInstall() = %+v, %q, %v", result, decision, err)
 	}
+	postState, err := svc.ProjectStateFingerprint()
+	if err != nil || result.ProjectStateFingerprint == "" || result.ProjectStateFingerprint != postState {
+		t.Fatalf("apply returned post-state fingerprint %q, actual %q, err %v", result.ProjectStateFingerprint, postState, err)
+	}
+	unchangedPlan, err := svc.PlanInstall(lock, candidate)
+	if err != nil || unchangedPlan.Decision != "unchanged" {
+		t.Fatalf("unchanged plan = %+v, %v", unchangedPlan, err)
+	}
+	unchanged, decision, err := svc.ApplyPlannedInstall(project, lock, candidate, unchangedPlan.PlanToken)
+	if err != nil || decision != "unchanged" || unchanged.ProjectStateFingerprint != unchangedPlan.StateFingerprint {
+		t.Fatalf("unchanged apply fingerprint = %+v, %q, %v; want %q", unchanged, decision, err, unchangedPlan.StateFingerprint)
+	}
 	entry, ok := lock.LookupTarget(candidate.ID, plan.Target)
 	if !ok || entry.DigestAlgorithm != skill.DigestAlgorithm {
 		t.Fatalf("lock entry lacks named digest algorithm: %+v", entry)

@@ -93,12 +93,13 @@ func cleanSegment(s string) bool {
 
 // InstallResult reports the outcome of one installation.
 type InstallResult struct {
-	ID      string
-	Name    string
-	Version string
-	Target  string
-	Digest  string
-	Already bool // re-install with identical content; zero mutation
+	ID                      string
+	Name                    string
+	Version                 string
+	Target                  string
+	Digest                  string
+	Already                 bool   // re-install with identical content; zero mutation
+	ProjectStateFingerprint string `json:"projectStateFingerprint,omitempty"`
 }
 
 // Install stages the candidate and swaps it into the target directory,
@@ -590,6 +591,13 @@ func (s Service) stateFingerprint() (string, error) {
 		_, _ = h.Write([]byte{0})
 	}
 	return "sha256:" + hex.EncodeToString(h.Sum(nil)), nil
+}
+
+// ProjectStateFingerprint exposes the manifest+lock snapshot used by install
+// plans so callers can safely sequence multiple approved applies without
+// silently accepting intervening project-state changes.
+func (s Service) ProjectStateFingerprint() (string, error) {
+	return s.stateFingerprint()
 }
 
 // writeOwnerMarker tags dir as an Oro-managed staging/backup directory.
