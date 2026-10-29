@@ -39,6 +39,7 @@ seleção de agents — as skills instalam em todos os marcados.`,
 	cmd.Flags().String("manifest", manifestFilename, "caminho para o orotools.yaml")
 	cmd.Flags().String("agent", "", "agent alvo no modo ad-hoc (sem orotools.yaml): opencode|cursor|claude-code|codex|copilot")
 	cmd.AddCommand(newSkillsUpdateCmd())
+	cmd.AddCommand(newSkillsProcessCmd())
 	return cmd
 }
 

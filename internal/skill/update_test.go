@@ -231,6 +231,9 @@ func TestUpdateAgentMismatchBlocks(t *testing.T) {
 // onde vive.
 func TestUpdateAdHocDerivesAgentPerEntry(t *testing.T) {
 	svc, lock := installForUpdate(t)
+	if err := os.Remove(svc.ManifestPath); err != nil {
+		t.Fatal(err)
+	}
 	svc.Agent = "cursor" // seria outro diretório; deve ser ignorado no ad-hoc
 	report, err := svc.Update(nil, lock, skill.UpdateInput{Bundled: []skill.Candidate{bundledWithVersion(t, "1.1.0")}}, skill.UpdateOptions{})
 	if err != nil {
@@ -533,12 +536,8 @@ func TestUpdatePersistFailureRestoresExactBytes(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	report, err := broken.Update(nil, lock, skill.UpdateInput{Bundled: []skill.Candidate{bundledWithVersion(t, "1.1.0")}}, skill.UpdateOptions{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if report.Failed != 1 {
-		t.Fatalf("report = %+v, want 1 failure", report)
+	if _, err := broken.Update(nil, lock, skill.UpdateInput{Bundled: []skill.Candidate{bundledWithVersion(t, "1.1.0")}}, skill.UpdateOptions{}); err == nil {
+		t.Fatal("invalid lock path should fail before update")
 	}
 
 	// Restored tree is byte-identical: content, no marker, digest intact.

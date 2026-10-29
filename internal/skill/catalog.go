@@ -31,6 +31,8 @@ const (
 	SourceRecipe SourceKind = "recipe"
 	// SourceGitHub marks skills from the public GitHub catalog.
 	SourceGitHub SourceKind = "github"
+	// SourceLocal marks skills from an explicitly authorized local checkout.
+	SourceLocal SourceKind = "local"
 )
 
 // GitHubCatalogRef is the fixed public skills catalog (skills-manager FR-6).

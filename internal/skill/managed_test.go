@@ -308,10 +308,11 @@ func TestServiceCleanOrphans(t *testing.T) {
 
 	svc.CleanOrphans()
 
-	for _, orphan := range []string{".orotools-stage-code-review-x", ".orotools-backup-code-review-y"} {
-		if _, err := os.Stat(filepath.Join(skillsDir, orphan)); !os.IsNotExist(err) {
-			t.Errorf("marked orphan %q not removed", orphan)
-		}
+	if _, err := os.Stat(filepath.Join(skillsDir, ".orotools-stage-code-review-x")); !os.IsNotExist(err) {
+		t.Errorf("marked staging orphan not removed: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(skillsDir, ".orotools-backup-code-review-y")); err != nil {
+		t.Errorf("backup without transaction evidence was discarded: %v", err)
 	}
 	for _, kept := range []string{".orotools-stage-user-data", ".orotools-backup-gibberish", "real-skill"} {
 		if _, err := os.Stat(filepath.Join(skillsDir, kept)); err != nil {

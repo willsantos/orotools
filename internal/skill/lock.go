@@ -28,15 +28,16 @@ var ErrLockNotFound = errors.New("skills lock não encontrado")
 // LockEntry is one managed skill record. No timestamps, no absolute paths —
 // the lock is deterministic and meant to be committed (skills-manager FR-18).
 type LockEntry struct {
-	ID            string `yaml:"id"`
-	Name          string `yaml:"name"`
-	Source        string `yaml:"source"`     // recipe | github (SourceKind)
-	SourceRef     string `yaml:"source_ref"` // recipe name or repository slug
-	Path          string `yaml:"path"`       // skill path inside the source
-	Version       string `yaml:"version"`    // installed version (metadata.version)
-	Revision      string `yaml:"revision"`   // commit SHA of the run; empty for bundled
-	Target        string `yaml:"target"`     // project-relative destination directory
-	ContentSHA256 string `yaml:"content_sha256"`
+	ID              string `yaml:"id"`
+	Name            string `yaml:"name"`
+	Source          string `yaml:"source"`     // recipe | github (SourceKind)
+	SourceRef       string `yaml:"source_ref"` // recipe name or repository slug
+	Path            string `yaml:"path"`       // skill path inside the source
+	Version         string `yaml:"version"`    // installed version (metadata.version)
+	Revision        string `yaml:"revision"`   // commit SHA of the run; empty for bundled
+	Target          string `yaml:"target"`     // project-relative destination directory
+	ContentSHA256   string `yaml:"content_sha256"`
+	DigestAlgorithm string `yaml:"digest_algorithm,omitempty"`
 }
 
 // Lock models .orotools/skills.lock.yaml schema v1.
@@ -123,6 +124,9 @@ func validateLockEntry(e *LockEntry) error {
 	}
 	if _, err := semver.StrictNewVersion(e.Version); err != nil {
 		return fmt.Errorf("skills lock: version %q inválido (id %q): %w", e.Version, e.ID, err)
+	}
+	if e.DigestAlgorithm != "" && e.DigestAlgorithm != DigestAlgorithm {
+		return fmt.Errorf("skills lock: digest_algorithm %q desconhecido (id %q)", e.DigestAlgorithm, e.ID)
 	}
 	if err := checkRelPath(e.Target); err != nil {
 		return fmt.Errorf("skills lock: target inválido (id %q): %w", e.ID, err)

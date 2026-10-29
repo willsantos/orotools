@@ -1,9 +1,11 @@
 package skill
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path"
+	"time"
 
 	"github.com/Masterminds/semver/v3"
 
@@ -57,6 +59,41 @@ type UpdateInput struct {
 // FR-22), compares it with the upstream catalog and applies updates per skill
 // atomically, best-effort (FR-28). Dry-run decides without mutating (FR-27).
 func (s Service) Update(m *manifest.Manifest, lock *Lock, in UpdateInput, opts UpdateOptions) (UpdateReport, error) {
+	originalManifest, originalLock := m, lock
+	if !opts.DryRun {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		projectLock, err := AcquireProjectLock(ctx, s.Base)
+		if err != nil {
+			return UpdateReport{}, fmt.Errorf("update: project lock: %w", err)
+		}
+		defer projectLock.Release()
+		if err := s.recoverTransaction(); err != nil {
+			return UpdateReport{}, fmt.Errorf("recover interrupted skill transaction: %w", err)
+		}
+		m, lock, err = s.reloadState(m, lock)
+		if err != nil {
+			return UpdateReport{}, err
+		}
+	}
+	report, err := s.updateUnlocked(m, lock, in, opts)
+	if err == nil {
+		if originalManifest != nil && m != nil && originalManifest != m {
+			*originalManifest = *m
+		}
+		if originalLock != nil && lock != nil && originalLock != lock {
+			*originalLock = *lock
+		}
+	}
+	return report, err
+}
+
+func (s Service) updateUnlocked(m *manifest.Manifest, lock *Lock, in UpdateInput, opts UpdateOptions) (UpdateReport, error) {
+	if !opts.DryRun {
+		if err := s.validateStatePaths(); err != nil {
+			return UpdateReport{}, fmt.Errorf("update: unsafe state path: %w", err)
+		}
+	}
 	var report UpdateReport
 	if lock == nil {
 		return report, fmt.Errorf("update: lock ausente")
@@ -298,12 +335,13 @@ func (s Service) forceRegister(m *manifest.Manifest, lock *Lock, cand Candidate,
 		return res
 	}
 	entry := LockEntry{
-		ID:        cand.ID,
-		Name:      cand.Name,
-		Source:    string(cand.Source),
-		SourceRef: cand.SourceRef,
-		Path:      cand.Path,
-		Target:    targetRel,
+		ID:              cand.ID,
+		Name:            cand.Name,
+		Source:          string(cand.Source),
+		SourceRef:       cand.SourceRef,
+		Path:            cand.Path,
+		Target:          targetRel,
+		DigestAlgorithm: DigestAlgorithm,
 	}
 	if err := s.replace(m, lock, cand, entry, staging, stagingDigest, nil); err != nil {
 		res.Decision = UpdateFailed

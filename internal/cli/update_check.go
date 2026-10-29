@@ -42,6 +42,9 @@ func shouldCheckForUpdate(version string, args []string) bool {
 		case "upgrade", "help", "completion":
 			return false
 		}
+		if args[0] == "skills" && len(args) > 1 && args[1] == "process" {
+			return false
+		}
 	}
 	return true
 }

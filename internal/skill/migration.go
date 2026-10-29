@@ -1,8 +1,10 @@
 package skill
 
 import (
+	"context"
 	"fmt"
 	"os"
+	"time"
 
 	"oroborus.dev/orotools/internal/manifest"
 )
@@ -50,6 +52,35 @@ type MigrationResult struct {
 // targets are only classified, never mutated. skills.external is out of scope
 // by construction: only bundled candidates reach this function.
 func (s Service) MigrateBundled(lock *Lock, cands []Candidate) ([]MigrationResult, error) {
+	if len(cands) == 0 {
+		return nil, nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	projectLock, err := AcquireProjectLock(ctx, s.Base)
+	if err != nil {
+		return nil, fmt.Errorf("migrate: project lock: %w", err)
+	}
+	defer projectLock.Release()
+	if err := s.recoverTransaction(); err != nil {
+		return nil, fmt.Errorf("recover interrupted skill transaction: %w", err)
+	}
+	originalLock := lock
+	_, lock, err = s.reloadState(nil, lock)
+	if err != nil {
+		return nil, err
+	}
+	results, err := s.migrateBundledUnlocked(lock, cands)
+	if err == nil && originalLock != nil && originalLock != lock {
+		*originalLock = *lock
+	}
+	return results, err
+}
+
+func (s Service) migrateBundledUnlocked(lock *Lock, cands []Candidate) ([]MigrationResult, error) {
+	if err := s.validateStatePaths(); err != nil {
+		return nil, fmt.Errorf("migrate: unsafe state path: %w", err)
+	}
 	results := make([]MigrationResult, 0, len(cands))
 	var adopted []MigrationResult
 	for _, cand := range cands {
@@ -91,14 +122,15 @@ func (s Service) MigrateBundled(lock *Lock, cands []Candidate) ([]MigrationResul
 		}
 		res.State = MigrationAdopted
 		res.Entry = LockEntry{
-			ID:            cand.ID,
-			Name:          cand.Name,
-			Source:        string(cand.Source),
-			SourceRef:     cand.SourceRef,
-			Path:          cand.Path,
-			Version:       cand.Version.String(),
-			Target:        targetRel,
-			ContentSHA256: sourceDigest,
+			ID:              cand.ID,
+			Name:            cand.Name,
+			Source:          string(cand.Source),
+			SourceRef:       cand.SourceRef,
+			Path:            cand.Path,
+			Version:         cand.Version.String(),
+			Target:          targetRel,
+			ContentSHA256:   sourceDigest,
+			DigestAlgorithm: DigestAlgorithm,
 		}
 		lock.Upsert(res.Entry)
 		adopted = append(adopted, res)

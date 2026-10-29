@@ -11,6 +11,9 @@ import (
 	"strings"
 )
 
+// DigestAlgorithm names the canonical managed-skill content hash contract.
+const DigestAlgorithm = "orotools-tree-sha256-v1"
+
 // Digest computes the canonical content digest of a file tree rooted at root
 // (skills-manager FR-19). For every regular file, ordered by its
 // slash-separated path relative to root, it feeds:

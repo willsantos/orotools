@@ -3,10 +3,51 @@ package manifest
 import (
 	"bytes"
 	"os"
+	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 )
+
+func TestWriteFailurePreservesPreviousManifestAtomically(t *testing.T) {
+	if os.Getenv("OROTOOLS_MANIFEST_RLIMIT_CHILD") == "1" {
+		signal.Ignore(syscall.SIGXFSZ)
+		var limit syscall.Rlimit
+		limit.Cur, limit.Max = 128, 128
+		if err := syscall.Setrlimit(syscall.RLIMIT_FSIZE, &limit); err != nil {
+			os.Exit(77)
+		}
+		path := os.Getenv("OROTOOLS_MANIFEST_PATH")
+		large := &Manifest{Version: 2, Project: ProjectRef{Name: strings.Repeat("x", 4096)}}
+		if Write(path, large) == nil {
+			os.Exit(2)
+		}
+		os.Exit(0)
+	}
+	dir := t.TempDir()
+	path := filepath.Join(dir, Filename)
+	if err := Write(path, &Manifest{Version: 1, Project: ProjectRef{Name: "preserve-me"}}); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command(os.Args[0], "-test.run=^TestWriteFailurePreservesPreviousManifestAtomically$")
+	cmd.Env = append(os.Environ(), "OROTOOLS_MANIFEST_RLIMIT_CHILD=1", "OROTOOLS_MANIFEST_PATH="+path)
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("child write: %v: %s", err, output)
+	}
+	after, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(before, after) {
+		t.Fatalf("failed atomic write modified manifest: before=%q after=%q", before, after)
+	}
+}
 
 func TestWriteReadRoundTrip(t *testing.T) {
 	dir := t.TempDir()
