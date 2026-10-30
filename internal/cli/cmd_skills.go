@@ -45,6 +45,8 @@ seleção de agents — as skills instalam em todos os marcados.`,
 	cmd.AddCommand(newSkillsInspectCmd())
 	cmd.AddCommand(newSkillsInstallCmd())
 	cmd.AddCommand(newSkillsUpdateCmd())
+	cmd.AddCommand(newSkillsMigrateCmd())
+	cmd.AddCommand(newSkillsRecoverCmd())
 	cmd.AddCommand(newSkillsProcessCmd())
 	return cmd
 }
