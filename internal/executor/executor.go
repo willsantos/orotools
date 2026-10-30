@@ -130,6 +130,8 @@ func (e Executor) Execute(plan *planner.Plan, ctx Context) []Result {
 			execExec(&r, step, ctx, e.runner())
 		case "message":
 			execMessage(&r, step, ctx)
+		case "onboarding":
+			execOnboarding(&r, step, ctx, plan)
 		default:
 			r.Error = errUnknownStep(step.Type)
 			r.Severity = SevFatal

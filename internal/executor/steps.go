@@ -6,8 +6,11 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 	"text/template"
 
+	"oroborus.dev/orotools/internal/onboarding"
+	"oroborus.dev/orotools/internal/planner"
 	"oroborus.dev/orotools/internal/recipe"
 	"oroborus.dev/orotools/internal/safeexec"
 	"oroborus.dev/orotools/internal/ui"
@@ -158,6 +161,57 @@ func execMessage(r *Result, step recipe.Step, ctx Context) {
 	out := ctx.stdout()
 	fmt.Fprintln(out, ui.PaletteFor(out).Info.Render(step.Text))
 	r.Action = ActMessaged
+}
+
+// execOnboarding applies the recipe-declared Git onboarding adoption. It runs
+// exclusively through the sealed plan embedded by the planner: onboarding.Apply
+// verifies the HMAC seal, re-inspects the repository and refuses any conflict
+// or drift, so nothing is ever written from inspection alone. Blocks are
+// Recoverable (reported with guidance; the remaining recipe steps continue);
+// a missing op or a plan/base mismatch is a planner/executor inconsistency
+// and stays Fatal.
+func execOnboarding(r *Result, step recipe.Step, ctx Context, plan *planner.Plan) {
+	op, ok := findOnboardingOp(plan, step.ID)
+	if !ok {
+		r.Error = fmt.Errorf("onboarding step %q has no planned onboarding operation; rebuild the plan", step.ID)
+		r.Severity = SevFatal
+		return
+	}
+	if op.Blocked {
+		r.Error = fmt.Errorf("onboarding blocked: %s; adopt manually with `oro onboarding` after resolving", strings.Join(op.Conflicts, "; "))
+		r.Severity = SevRecoverable
+		return
+	}
+	base, err := filepath.Abs(ctx.Base)
+	if err != nil {
+		r.Error = fmt.Errorf("resolve onboarding base: %w", err)
+		r.Severity = SevFatal
+		return
+	}
+	if op.Sealed.Root != filepath.Clean(base) {
+		r.Error = fmt.Errorf("onboarding plan targets %q but execution base is %q; rebuild the plan", op.Sealed.Root, filepath.Clean(base))
+		r.Severity = SevFatal
+		return
+	}
+	if err := onboarding.Apply(op.Sealed); err != nil {
+		r.Error = err
+		r.Severity = SevRecoverable
+		return
+	}
+	r.Action = ActRan
+}
+
+// findOnboardingOp locates the planner-produced onboarding op for stepID.
+func findOnboardingOp(plan *planner.Plan, stepID string) (planner.OnboardingOp, bool) {
+	if plan == nil {
+		return planner.OnboardingOp{}, false
+	}
+	for _, op := range plan.Onboarding {
+		if op.StepID == stepID {
+			return op, true
+		}
+	}
+	return planner.OnboardingOp{}, false
 }
 
 // writeFile writes data to dest, creating parent directories as needed.

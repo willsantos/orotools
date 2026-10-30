@@ -38,7 +38,7 @@ type Requirement struct {
 // fields per type are enforced by Validate.
 type Step struct {
 	ID     string     `yaml:"id"`
-	Type   string     `yaml:"type"` // mkdir|copy|template|exec|message
+	Type   string     `yaml:"type"` // mkdir|copy|template|exec|message|onboarding
 	Stage  string     `yaml:"stage"`
 	When   *Condition `yaml:"when"`
 	SkipIf *Condition `yaml:"skip_if"`
@@ -55,6 +55,12 @@ type Step struct {
 	Command          string   `yaml:"command"`
 	Args             []string `yaml:"args"`
 	WorkingDirectory string   `yaml:"working_directory"`
+
+	// onboarding: Git hook/.gitignore adoption through the onboarding sealed
+	// plan. Non-empty ProtectBranches opts in to managed branch protection
+	// hooks; empty/absent manages only the .gitignore block. Names are never
+	// inferred from repository state.
+	ProtectBranches []string `yaml:"protect_branches"`
 
 	// message
 	Text string `yaml:"text"`

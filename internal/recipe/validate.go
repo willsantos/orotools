@@ -6,7 +6,7 @@ import (
 
 // Known enum values for the v1 schema.
 var (
-	knownStepTypes     = map[string]bool{"mkdir": true, "copy": true, "template": true, "exec": true, "message": true}
+	knownStepTypes     = map[string]bool{"mkdir": true, "copy": true, "template": true, "exec": true, "message": true, "onboarding": true}
 	knownVariableTypes = map[string]bool{"string": true, "boolean": true, "select": true}
 	knownTemplateModes = map[string]bool{"": true, "create": true, "overwrite": true}
 )
@@ -76,7 +76,7 @@ func validateStep(path string, s Step) []error {
 	if s.Type == "" {
 		errs = append(errs, fmt.Errorf("%s.type: required field is empty", path))
 	} else if !knownStepTypes[s.Type] {
-		errs = append(errs, fmt.Errorf("%s.type: unknown %q (want mkdir|copy|template|exec|message)", path, s.Type))
+		errs = append(errs, fmt.Errorf("%s.type: unknown %q (want mkdir|copy|template|exec|message|onboarding)", path, s.Type))
 	}
 
 	if !knownTemplateModes[s.Mode] {
@@ -109,6 +109,18 @@ func validateStep(path string, s Step) []error {
 	case "message":
 		if s.Text == "" {
 			errs = append(errs, fmt.Errorf("%s.text: required for type %q", path, s.Type))
+		}
+	case "onboarding":
+		seen := map[string]bool{}
+		for i, b := range s.ProtectBranches {
+			if b == "" {
+				errs = append(errs, fmt.Errorf("%s.protect_branches[%d]: branch name is empty", path, i))
+				continue
+			}
+			if seen[b] {
+				errs = append(errs, fmt.Errorf("%s.protect_branches[%d]: duplicate branch %q", path, i, b))
+			}
+			seen[b] = true
 		}
 	}
 

@@ -21,7 +21,7 @@ func (p *Plan) FprintDryRun(w io.Writer) {
 }
 
 func (p *Plan) dryRun(pal ui.Palette) string {
-	if p == nil || (len(p.Directories) == 0 && len(p.Files) == 0 && len(p.Commands) == 0 && len(p.Messages) == 0 && len(p.BundledSkills) == 0 && len(p.BundledAgents) == 0 && len(p.ExternalInstallers) == 0) {
+	if p == nil || (len(p.Directories) == 0 && len(p.Files) == 0 && len(p.Commands) == 0 && len(p.Messages) == 0 && len(p.BundledSkills) == 0 && len(p.BundledAgents) == 0 && len(p.ExternalInstallers) == 0 && len(p.Onboarding) == 0) {
 		return "PLAN\n\nNo operations.\n"
 	}
 
@@ -77,6 +77,26 @@ func (p *Plan) dryRun(pal ui.Palette) string {
 		}
 	}
 
+	if len(p.Onboarding) > 0 {
+		b.WriteString("\n" + pal.Info.Render("Onboarding (Git)") + "\n")
+		for _, op := range p.Onboarding {
+			if op.Blocked {
+				fmt.Fprintf(&b, "%s %s (blocked)\n", pal.Key.Render("!"), onboardingTarget(op))
+			} else {
+				fmt.Fprintf(&b, "%s %s (managed adoption via sealed plan)\n", pal.Success.Render("+"), onboardingTarget(op))
+			}
+			for _, f := range op.Files {
+				fmt.Fprintf(&b, "  %s %s\n", pal.Success.Render("+"), f)
+			}
+			for _, a := range op.Actions {
+				fmt.Fprintf(&b, "  = %s\n", a)
+			}
+			for _, c := range op.Conflicts {
+				fmt.Fprintf(&b, "  %s %s\n", pal.Key.Render("!"), c)
+			}
+		}
+	}
+
 	b.WriteString("\n")
 	fmt.Fprintf(&b, "Local operations       %d\n", p.LocalOps)
 	fmt.Fprintf(&b, "External operations    %d\n", p.NetworkOps)
@@ -101,4 +121,17 @@ func formatArgs(args []string) string {
 		b.WriteString(a)
 	}
 	return b.String()
+}
+
+// onboardingTarget labels the onboarding op in dry-run output: the planned
+// root, falling back to the step id when inspection failed before a root was
+// resolved.
+func onboardingTarget(op OnboardingOp) string {
+	if op.Root != "" {
+		return op.Root
+	}
+	if op.StepID != "" {
+		return "step " + op.StepID
+	}
+	return "onboarding"
 }

@@ -20,6 +20,7 @@ type applyOptions struct {
 	dryRun     bool
 	out        io.Writer
 	err        io.Writer
+	cwd        string // project root for planning/execution; empty means "."
 }
 
 // runApply reconciles the current project with orotools.yaml + recipe (spec
@@ -28,6 +29,11 @@ type applyOptions struct {
 func runApply(opts applyOptions) error {
 	out := writerOrStdout(opts.out)
 	status := ui.NewStatus(out)
+
+	base := opts.cwd
+	if base == "" {
+		base = "."
+	}
 
 	m, err := manifest.Read(opts.manifest)
 	if err != nil {
@@ -63,7 +69,7 @@ func runApply(opts applyOptions) error {
 	if agentID == "" {
 		agentID = "opencode"
 	}
-	plan, err := planner.Build(r, res, conditions.Context{Vars: res.Vars}, agentID)
+	plan, err := planner.Build(r, res, conditions.Context{Vars: res.Vars, Base: base}, agentID)
 	if err != nil {
 		return fmt.Errorf("plan: %w", err)
 	}
@@ -76,7 +82,7 @@ func runApply(opts applyOptions) error {
 	execCtx := executor.Context{
 		Project: res.Project,
 		Vars:    res.Vars,
-		Base:    ".",
+		Base:    base,
 		Sources: src.FS,
 		Stdout:  out,
 		Stderr:  opts.err,

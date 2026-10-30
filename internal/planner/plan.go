@@ -2,9 +2,11 @@ package planner
 
 import (
 	"fmt"
+	"path/filepath"
 
 	"oroborus.dev/orotools/internal/conditions"
 	"oroborus.dev/orotools/internal/installer"
+	"oroborus.dev/orotools/internal/onboarding"
 	"oroborus.dev/orotools/internal/recipe"
 	"oroborus.dev/orotools/internal/variables"
 )
@@ -17,6 +19,7 @@ const (
 	CatFile
 	CatCommand
 	CatMessage
+	CatOnboarding
 )
 
 // PlannedStep is a recipe step that survived the when-filter, annotated with
@@ -50,21 +53,40 @@ type ExternalInstallerOp struct {
 	Args    []string
 }
 
+// OnboardingOp is the planned Git onboarding adoption declared by an
+// `onboarding` recipe step. Planning is read-only: it invokes
+// onboarding.PlanApply for the plan base and embeds the resulting sealed plan.
+// The executor applies exclusively through Sealed (onboarding.Apply verifies
+// the seal and re-inspects); nothing is written by inspection alone. When
+// Blocked is true, Sealed must not be applied and Conflicts carry the
+// diagnostics.
+type OnboardingOp struct {
+	StepID          string
+	Root            string
+	ProtectBranches []string
+	Actions         []string
+	Conflicts       []string
+	Files           []string
+	Blocked         bool
+	Sealed          onboarding.Plan
+}
+
 // Plan is the resolved, filtered view of a recipe ready for execution or
 // dry-run rendering.
 type Plan struct {
-	Project             variables.Project
-	Steps               []PlannedStep
-	Directories         []string
-	Files               []FileOp
-	Commands            []CommandOp
-	Messages            []string
-	BundledSkills       []string
-	BundledAgents       []string
-	ExternalInstallers  []ExternalInstallerOp
-	LocalOps            int
-	NetworkOps          int
-	NetworkRequired     bool
+	Project            variables.Project
+	Steps              []PlannedStep
+	Directories        []string
+	Files              []FileOp
+	Commands           []CommandOp
+	Messages           []string
+	BundledSkills      []string
+	BundledAgents      []string
+	ExternalInstallers []ExternalInstallerOp
+	Onboarding         []OnboardingOp
+	LocalOps           int
+	NetworkOps         int
+	NetworkRequired    bool
 }
 
 // Build constructs the execution plan for r given resolved variables. Steps
@@ -87,7 +109,7 @@ func Build(r *recipe.Recipe, res *variables.Result, ctx conditions.Context, agen
 				continue
 			}
 		}
-		if err := addToPlan(p, s); err != nil {
+		if err := addToPlan(p, s, ctx); err != nil {
 			return nil, err
 		}
 	}
@@ -117,7 +139,7 @@ func appendExternalInstallers(p *Plan, r *recipe.Recipe, agentID string) error {
 	return nil
 }
 
-func addToPlan(p *Plan, s recipe.Step) error {
+func addToPlan(p *Plan, s recipe.Step, ctx conditions.Context) error {
 	cat, err := categorize(s.Type)
 	if err != nil {
 		return fmt.Errorf("step %q: %w", s.ID, err)
@@ -147,10 +169,47 @@ func addToPlan(p *Plan, s recipe.Step) error {
 		}
 	case CatMessage:
 		p.Messages = append(p.Messages, s.Text)
+	case CatOnboarding:
+		p.Onboarding = append(p.Onboarding, planOnboarding(ctx, s))
+		p.LocalOps++
 	}
 
 	p.Steps = append(p.Steps, ps)
 	return nil
+}
+
+// planOnboarding runs the read-only onboarding preflight for s against the
+// plan base (empty base means the current directory, matching executor
+// semantics for `oro apply`). Inspection failures and conflicts are recorded
+// on the op as blocks — never as plan-level errors — so the preview can list
+// them and the executor refuses to apply that specific action while the rest
+// of the recipe continues.
+func planOnboarding(ctx conditions.Context, s recipe.Step) OnboardingOp {
+	base := ctx.Base
+	if base == "" {
+		base = "."
+	}
+	op := OnboardingOp{StepID: s.ID, ProtectBranches: append([]string(nil), s.ProtectBranches...)}
+	opts := onboarding.Options{}
+	if len(s.ProtectBranches) > 0 {
+		opts = onboarding.Options{EnableProtection: true, ProtectedBranches: op.ProtectBranches}
+	}
+	p, err := onboarding.PlanApply(base, opts)
+	if err != nil {
+		op.Blocked = true
+		op.Conflicts = []string{err.Error()}
+		return op
+	}
+	op.Root = p.Root
+	op.Actions = append([]string(nil), p.Actions...)
+	op.Conflicts = append([]string(nil), p.Conflicts...)
+	op.Files = []string{p.IgnorePath, p.StatePath}
+	if opts.EnableProtection {
+		op.Files = append(op.Files, filepath.Join(p.HooksDir, "pre-commit"), filepath.Join(p.HooksDir, "pre-merge-commit"))
+	}
+	op.Blocked = len(p.Conflicts) > 0
+	op.Sealed = p
+	return op
 }
 
 func categorize(typ string) (Category, error) {
@@ -163,6 +222,8 @@ func categorize(typ string) (Category, error) {
 		return CatCommand, nil
 	case "message":
 		return CatMessage, nil
+	case "onboarding":
+		return CatOnboarding, nil
 	default:
 		return 0, fmt.Errorf("unknown step type %q", typ)
 	}

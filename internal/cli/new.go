@@ -103,8 +103,10 @@ func runNew(opts newOptions) error {
 		}
 	}
 
-	// Plan.
-	plan, err := planner.Build(r, res, conditions.Context{Vars: res.Vars}, agentName)
+	// Plan. Base mirrors the executor target so path conditions and onboarding
+	// preflight resolve against the project directory being created.
+	projectBase := res.Project.Slug
+	plan, err := planner.Build(r, res, conditions.Context{Vars: res.Vars, Base: projectBase}, agentName)
 	if err != nil {
 		return fmt.Errorf("plano: %w", err)
 	}
@@ -115,7 +117,6 @@ func runNew(opts newOptions) error {
 	}
 
 	// Execute.
-	projectBase := res.Project.Slug
 	execCtx := executor.Context{
 		Project: res.Project,
 		Vars:    res.Vars,

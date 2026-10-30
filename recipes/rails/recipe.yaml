@@ -18,6 +18,11 @@ variables:
       - sqlite
       - mysql
       - none
+  # Opt-in Git onboarding (M04.6): default false keeps `oro new`/`oro apply`
+  # behavior identical unless the user explicitly passes --set onboarding=true.
+  onboarding:
+    type: boolean
+    default: false
 
 steps:
   - id: rails-new
@@ -31,6 +36,19 @@ steps:
       - --skip-git
     skip_if:
       path_exists: Gemfile
+  # Demonstrates the recipe-level onboarding wiring (M04.3): the planner runs
+  # the read-only onboarding preflight and the executor applies only through
+  # the sealed plan. Conflicts (Husky, core.hooksPath, worktrees) block just
+  # this step with diagnostics; nothing is overwritten.
+  - id: git-onboarding
+    stage: adopt
+    type: onboarding
+    when:
+      variable: onboarding
+      equals: true
+    protect_branches:
+      - main
+      - develop
   - id: ready
     type: message
     text: "Rails project scaffolded."
