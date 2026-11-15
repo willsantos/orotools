@@ -9,7 +9,7 @@ import (
 
 const (
 	templateRel = "pipelines/azure-pipelines.yml.tmpl"
-	destRel     = "azure-pipelines.yml"
+	destRel     = ".azure-pipelines/ci.yml"
 	providerKey = "azure-pipelines"
 )
 

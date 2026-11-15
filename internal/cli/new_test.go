@@ -214,7 +214,7 @@ func TestRunNew_PipelineDefaultFromRepository(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := os.Stat(filepath.Join(workDir, "azure-app", "azure-pipelines.yml")); err != nil {
+	if _, err := os.Stat(filepath.Join(workDir, "azure-app", ".azure-pipelines", "ci.yml")); err != nil {
 		t.Fatalf("azure pipeline not created from repository default: %v", err)
 	}
 }

@@ -115,30 +115,58 @@ jobs:
       - run: pnpm build
 `
 
-	azurePipelinesGeneric = `trigger:
+	azurePipelinesGeneric = `# CI padrão Oroborus (gerado pelo OroTools). Layout: .azure-pipelines/ci.yml.
+# PR: em Azure Repos o pr: do YAML não dispara. Configure Build Validation nas
+# policies das branches main e dev (tools/apply_branch_policies.py, do
+# oroborus-engineering-standards).
+name: $(Date:yyyy.MM.dd).$(Rev:r)
+
+trigger:
   branches:
     include:
       - main
+      - dev
+
+pr: none
 
 pool:
-  vmImage: ubuntu-latest
+  name: Default
 
 steps:
+  - checkout: self
+    persistCredentials: false
   - script: echo "configure CI steps for {{.Project.Name}}"
     displayName: verify
 `
 
-	azurePipelinesDotnet = `trigger:
+	azurePipelinesDotnet = `# CI padrão Oroborus (gerado pelo OroTools). Layout: .azure-pipelines/ci.yml.
+# PR: em Azure Repos o pr: do YAML não dispara. Configure Build Validation nas
+# policies das branches main e dev (tools/apply_branch_policies.py, do
+# oroborus-engineering-standards).
+name: $(Date:yyyy.MM.dd).$(Rev:r)
+
+trigger:
   branches:
     include:
       - main
+      - dev
+
+pr: none
 
 pool:
-  vmImage: ubuntu-latest
+  name: Default
+
+variables:
+  DOTNET_VERSION: "10.x"
 
 steps:
+  - checkout: self
+    persistCredentials: false
   - task: UseDotNet@2
     displayName: Install .NET SDK
+    inputs:
+      packageType: sdk
+      version: $(DOTNET_VERSION)
   - script: dotnet restore
     displayName: restore
   - script: dotnet build --no-restore
@@ -147,59 +175,108 @@ steps:
     displayName: test
 `
 
-	azurePipelinesDotnetNext = `trigger:
+	azurePipelinesDotnetNext = `# CI padrão Oroborus (gerado pelo OroTools). Layout: .azure-pipelines/ci.yml.
+# PR: em Azure Repos o pr: do YAML não dispara. Configure Build Validation nas
+# policies das branches main e dev (tools/apply_branch_policies.py, do
+# oroborus-engineering-standards).
+name: $(Date:yyyy.MM.dd).$(Rev:r)
+
+trigger:
   branches:
     include:
       - main
+      - dev
+
+pr: none
 
 pool:
-  vmImage: ubuntu-latest
+  name: Default
+
+variables:
+  DOTNET_VERSION: "10.x"
+  NODE_VERSION: "24.x"
 
 stages:
   - stage: Verify
     jobs:
       - job: Api
         steps:
+          - checkout: self
+            persistCredentials: false
           - task: UseDotNet@2
+            displayName: Install .NET SDK
+            inputs:
+              packageType: sdk
+              version: $(DOTNET_VERSION)
           - script: dotnet restore && dotnet build --no-restore && dotnet test --no-build
             displayName: dotnet verify
       - job: Web
         steps:
+          - checkout: self
+            persistCredentials: false
           - task: NodeTool@0
             inputs:
-              versionSpec: 22.x
+              versionSpec: $(NODE_VERSION)
           - script: corepack enable && pnpm install --frozen-lockfile && pnpm lint && pnpm typecheck && pnpm build
             displayName: web verify
 `
 
-	azurePipelinesRails = `trigger:
+	azurePipelinesRails = `# CI padrão Oroborus (gerado pelo OroTools). Layout: .azure-pipelines/ci.yml.
+# PR: em Azure Repos o pr: do YAML não dispara. Configure Build Validation nas
+# policies das branches main e dev (tools/apply_branch_policies.py, do
+# oroborus-engineering-standards).
+name: $(Date:yyyy.MM.dd).$(Rev:r)
+
+trigger:
   branches:
     include:
       - main
+      - dev
+
+pr: none
 
 pool:
-  vmImage: ubuntu-latest
+  name: Default
+
+variables:
+  RUBY_VERSION: ">= 3.2"
 
 steps:
+  - checkout: self
+    persistCredentials: false
   - task: UseRubyVersion@0
     inputs:
-      versionSpec: ">= 3.2"
+      versionSpec: $(RUBY_VERSION)
   - script: bundle install && bundle exec rails test
     displayName: verify
 `
 
-	azurePipelinesFastifyNext = `trigger:
+	azurePipelinesFastifyNext = `# CI padrão Oroborus (gerado pelo OroTools). Layout: .azure-pipelines/ci.yml.
+# PR: em Azure Repos o pr: do YAML não dispara. Configure Build Validation nas
+# policies das branches main e dev (tools/apply_branch_policies.py, do
+# oroborus-engineering-standards).
+name: $(Date:yyyy.MM.dd).$(Rev:r)
+
+trigger:
   branches:
     include:
       - main
+      - dev
+
+pr: none
 
 pool:
-  vmImage: ubuntu-latest
+  name: Default
+
+variables:
+  NODE_VERSION: "24.x"
 
 steps:
+  - checkout: self
+    persistCredentials: false
   - task: NodeTool@0
     inputs:
-      versionSpec: 22.x
+      versionSpec: $(NODE_VERSION)
   - script: corepack enable && pnpm install --frozen-lockfile && pnpm lint && pnpm typecheck && pnpm test && pnpm build
     displayName: verify
 `
